@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>確認フロー（修正版：連続送信OK）</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --border:#e5e7eb; --text:#111827;
+    --muted:#6b7280; --accent:#2563eb; --danger:#dc2626; --radius:14px;
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans JP",sans-serif}
+  header{position:sticky;top:0;background:#fffcc;border-bottom:1px solid var(--border);
+    background:rgba(255,255,255,.86);backdrop-filter: blur(8px);z-index:5}
+  .wrap{max-width:1100px;margin:0 auto;padding:12px 16px}
+  h1{margin:0;font-size:20px}
+  .sub{color:var(--muted);font-size:13px}
+  .tabs{display:flex;gap:8px;margin-top:10px}
+  .tab{padding:8px 12px;border-radius:999px;border:1px solid var(--border);
+    background:#fff;font-weight:700;cursor:pointer}
+  .tab.active{background:var(--accent);color:#fff;border-color:transparent}
+  .tab.disabled{opacity:.45;pointer-events:none}
+  main{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;box-shadow:0 6px 24px rgba(0,0,0,.06)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1 1 240px}
+  input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--border);
+    border-radius:12px;background:#fff}
+  textarea{resize:vertical}
+  .btn{padding:9px 12px;border-radius:10px;border:1px solid var(--border);
+    background:#fff;cursor:pointer;font-weight:700}
+  .btn.primary{background:var(--accent);color:#fff;border-color:transparent}
+  .btn.danger{background:var(--danger);color:#fff;border-color:transparent}
+  .pill{padding:3px 8px;border-radius:999px;border:1px solid var(--border);
+    background:#f9fafb;font-size:12px}
+  .hidden{display:none}
+  .empty{border:1px dashed var(--border);border-radius:12px;padding:16px;text-align:center;color:var(--muted)}
+  .grid .card{margin-bottom:12px}
+  .flash{animation:flash 900ms ease-out 1}
+  @keyframes flash{0%{box-shadow:0 0 0 0 rgba(37,99,235,.35);background:#eff6ff}
+                   100%{box-shadow:0 0 0 16px rgba(37,99,235,0);background:#ffffff}}
+  /* welcome overlay */
+  .welcome{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(rgba(255,255,255,.94),rgba(255,255,255,.94));z-index:20}
+  .welcome.hidden{display:none}
+  .welcome-card{background:#fff;border:1px solid var(--border);border-radius:16px;
+    padding:20px;width:min(640px,92%);box-shadow:0 8px 40px rgba(0,0,0,.08)}
+  .welcome-card h2{margin:0 0 6px}
+  /* urgent overlay */
+  .urgent{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(220,38,38,.14);backdrop-filter: blur(3px);z-index:15}
+  .urgent.show{display:flex}
+  .urgent-card{background:#fff;border:2px solid #fecaca;border-radius:18px;padding:18px;
+    width:min(720px,92%);box-shadow:0 18px 60px rgba(220,38,38,.25)}
+  .urgent-title{font-weight:800;font-size:18px;color:#991b1b;margin-bottom:8px}
+  .toasts{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+    display:flex;flex-direction:column;gap:8px;z-index:50}
+  .toast{background:#111827;color:#fff;border-radius:12px;padding:10px 14px;opacity:.96}
+</style>
+
+<!-- Supabase JS (CDN) + robust initializer -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function initSupabaseClient(){
+  try{
+    if(window.sb){ console.log('[INIT] sb already exists'); }
+    if(!window.supabase){ console.warn('[INIT] supabase library missing'); return; }
+    const pick = (keys)=>{ for(const k of keys){ const v = localStorage.getItem(k); if(v && v.trim()) return v.trim(); } return null; };
+    const url = pick(['project_url','SUPABASE_URL','supabase_url','sb_url','SUPABASE_PROJECT_URL']);
+    const key = pick(['anon_public_key','SUPABASE_ANON_KEY','supabase_key','anon_key','SUPABASE_ANON_PUBLIC_KEY']);
+    if(url && key){
+      window.sb = window.supabase.createClient(url, key);
+      console.log('[INIT] sb created from localStorage', {url});
+    }else{
+      console.warn('[INIT] Cannot init sb. url/key not found in localStorage');
+    }
+    window.__reinit_sb__ = function(u,k){
+      try{ if(!window.supabase) return console.warn('[INIT] lib missing');
+        if(!(u&&k)) return console.warn('[INIT] need url/key');
+        window.sb = window.supabase.createClient(u, k);
+        console.log('[INIT] sb re-initialized');
+        if(window.__refresh_tasks__) window.__refresh_tasks__();
+      }catch(e){ console.error(e); }
+    };
+  }catch(e){ console.error('[INIT] exception', e); }
+})();
+</script>
+
+<script>
+window.__refresh_tasks__ = async function(){
+  try{
+    if(!window.sb){ console.warn('[LIST] sb undefined'); return; }
+    const { data: { user } } = await sb.auth.getUser();
+    if(!user){ console.warn('[LIST] no user'); return; }
+    const { data, error } = await sb.from('tasks')
+      .select('id,title,body,priority,due_at,status,created_at')
+      .eq('created_by', user.id).eq('status','open')
+      .order('created_at', { ascending:false }).limit(50);
+    if(error){ console.warn('[LIST] error', error); return; }
+
+    const header = Array.from(document.querySelectorAll('*'))
+      .find(el => el.textContent && el.textContent.includes('あなたの未解決タスク'));
+    if(!header){ console.warn('[LIST] header not found'); return; }
+    const container = header.parentElement.querySelector(':scope > div:nth-child(2)') || header.parentElement;
+
+    const fmt = s => (s==null? '' : String(s));
+    const html = (data||[]).map(t => `
+      <div style="border:1px solid #eee;border-radius:10px;padding:12px;margin:10px 0;">
+        <div style="font-weight:600;">${fmt(t.title)||'(無題)'}</div>
+        <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+        <div style="color:#888;margin-top:6px;font-size:12px;">
+          優先度:${fmt(t.priority)||'mid'} ${t.due_at? ' / 期日:'+new Date(t.due_at).toLocaleString(): ''}
+        </div>
+      </div>`).join('');
+    container.innerHTML = (data && data.length) ? html : '<div style="color:#999">未解決タスクはありません</div>';
+    console.log('[LIST] rendered', data?.length||0);
+  }catch(e){ console.error('[LIST] exception', e); }
+};
+window.addEventListener('load', () => setTimeout(() => { if(window.__refresh_tasks__) window.__refresh_tasks__(); }, 250));
+</script>
+
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>確認フロー（修正版）</h1>
+      <div class="sub">役割は「ユーザー（依頼）」と「囚人P（承認）」です。</div>
+      <div class="tabs">
+        <button id="tab-req" class="tab active" data-target="requester">ユーザー用（依頼）</button>
+        <button id="tab-app" class="tab" data-target="approver">囚人P用（承認）</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- login -->
+  <div id="welcome" class="welcome">
+    <div class="welcome-card">
+      <h2>ログインを選択</h2>
+      <p class="sub">役割を選んでサインインしてください。</p>
+      <div class="row">
+        <div class="grow">
+          <label class="sub">ユーザー名</label>
+          <select id="emp-select">
+            <option>ユーザーA</option>
+            <option>ユーザーB</option>
+          </select>
+        </div>
+        <button id="login-emp" class="btn primary">ユーザーとしてログイン</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="login-boss" class="btn">囚人Pとしてログイン</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- urgent for approver -->
+  <div id="urgent" class="urgent">
+    <div class="urgent-card">
+      <div class="urgent-title">⚠ 急ぎの確認</div>
+      <div id="urgent-body"></div>
+      <div style="text-align:right;margin-top:10px">
+        <button id="urgent-go" class="btn primary">今すぐ確認する</button>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <!-- requester panel -->
+    <section id="panel-requester">
+      <section class="card">
+        <div class="row">
+          <div class="grow">
+            <label class="sub">テンプレート</label>
+            <select id="rq-template">
+              <option value="">選択しない</option>
+              <option value="illust">イラスト確認</option>
+              <option value="talent">タレント返信確認</option>
+              <option value="client">案件先確認</option>
+              <option value="accounting">経理関連</option>
+            </select>
+          </div>
+          <div style="width:140px">
+            <label class="sub">優先度</label>
+            <select id="rq-priority">
+              <option value="low">低</option>
+              <option value="mid" selected>中</option>
+              <option value="high">高</option>
+            </select>
+          </div>
+          <div style="width:220px">
+            <label class="sub">期限</label>
+            <input type="datetime-local" id="rq-due" />
+          </div>
+          <div>
+            <label class="sub">&nbsp;</label>
+            <button id="rq-send" class="btn primary">送信</button>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="grow"><input id="rq-title" placeholder="タイトル" /></div>
+          <div style="width:260px"><input id="rq-tags" placeholder="タグ（カンマ区切り）" /></div>
+          <div style="width:200px"><input id="rq-project" placeholder="プロジェクト（任意）" /></div>
+        </div>
+        <div class="row" style="margin-top:10px"><textarea id="rq-body" rows="4" placeholder="詳細"></textarea></div>
+      </section>
+
+      <section class="card">
+        <div style="font-weight:700;margin-bottom:6px">あなたの未解決タスク</div>
+        <div id="rq-open" class="grid"></div>
+        <div id="rq-open-empty" class="empty">未解決タスクはありません</div>
+      </section>
+
+      <section class="card">
+        <div style="font-weight:700;margin-bottom:6px">囚人P確認済（履歴）</div>
+        <div id="rq-done" class="grid"></div>
+        <div id="rq-done-empty" class="empty">確認済みのタスクはまだありません</div>
+      </section>
+    </section>
+
+    <!-- approver panel -->
+    <section id="panel-approver" class="hidden">
+      <section class="card">
+        <div style="font-weight:700;margin-bottom:6px">未解決</div>
+        <div id="ap-open" class="grid"></div>
+        <div id="ap-open-empty" class="empty">ありません</div>
+        <div style="font-weight:700;margin:14px 0 6px">完了済み</div>
+        <div id="ap-done" class="grid"></div>
+        <div id="ap-done-empty" class="empty">ありません</div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toasts" class="toasts"></div>
+
+<script>
+  // ===== State & helpers =====
+  const state = {
+    tasks: [], nextId: 1,
+    currentUser: null, // {role:'requester'|'approver', name:string}
+  };
+  const $ = sel => document.querySelector(sel);
+  const html = s => String(s ?? '').replace(/[&<>]/g, ch => ch==='&'?'&amp;':(ch==='<'?'&lt;':'&gt;'));
+  function showToast(msg){ const box=$('#toasts'); const t=document.createElement('div'); t.className='toast'; t.textContent=msg; box.appendChild(t); setTimeout(()=>{t.style.opacity=.0; setTimeout(()=>t.remove(),260)},1600); }
+
+  // ===== Login =====
+  $('#login-emp').addEventListener('click', ()=>{ state.currentUser={role:'requester',name:$('#emp-select').value}; $('#welcome').classList.add('hidden'); showPanel('requester'); renderAll(); });
+  $('#login-boss').addEventListener('click', ()=>{ state.currentUser={role:'approver',name:'囚人P'}; $('#welcome').classList.add('hidden'); showPanel('approver'); renderAll(); });
+
+  // ===== Tabs =====
+  document.querySelectorAll('.tab').forEach(b=> b.addEventListener('click', ()=>{
+    if(!state.currentUser){ alert('先にログインしてください'); return; }
+    const target = b.dataset.target;
+    if(state.currentUser.role==='requester' && target==='approver'){ alert('囚人Pのみアクセスできます'); return; }
+    if(state.currentUser.role==='approver' && target==='requester'){ alert('ユーザーのみアクセスできます'); return; }
+    showPanel(target);
+  }));
+  function showPanel(which){
+    $('#tab-req').classList.toggle('active', which==='requester');
+    $('#tab-app').classList.toggle('active', which==='approver');
+    $('#panel-requester').classList.toggle('hidden', which!=='requester');
+    $('#panel-approver').classList.toggle('hidden', which!=='approver');
+  }
+
+  // ===== Templates =====
+  $('#rq-template').addEventListener('change', e=>{
+    const v = e.target.value;
+    if(v==='illust'){
+      $('#rq-title').value='イラスト確認';
+      $('#rq-body').value='イラストレーターからの素材／修正案の確認です。問題なければOKをお願いします。';
+      $('#rq-tags').value='イラスト,確認';
+    } else if(v==='talent'){
+      $('#rq-title').value='タレント返信確認';
+      $('#rq-body').value='タレントからの要望／返信内容についてご確認ください。';
+      $('#rq-tags').value='タレント,返信';
+    } else if(v==='client'){
+      $('#rq-title').value='案件先確認';
+      $('#rq-body').value='案件先とのやり取り（文面・条件・スケジュール）に関する確認です。';
+      $('#rq-tags').value='案件先,確認';
+    } else if(v==='accounting'){
+      $('#rq-title').value='経理関連';
+      $('#rq-body').value='経理・請求書・支払い関連の確認です。';
+      $('#rq-tags').value='経理,請求';
+    }
+  });
+
+  // ===== Send (連続送信OK・ボタン無変更・即反映) =====
+  $('#rq-send').addEventListener('click', () => {
+    if(!state.currentUser || state.currentUser.role!=='requester'){ alert('ユーザーとしてログインしてください'); return; }
+    const row = {
+      id: state.nextId++,
+      title: $('#rq-title').value.trim(),
+      body: $('#rq-body').value.trim(),
+      priority: $('#rq-priority').value,
+      due_at: $('#rq-due').value ? new Date($('#rq-due').value).toISOString(): null,
+      status: 'open',
+      created_by_name: state.currentUser.name,
+      archived_for: [], nudge_count:0, last_nudged_at:null,
+      tags: $('#rq-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+      project: $('#rq-project').value.trim()||null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    if(!row.title){ alert('タイトルは必須'); return; }
+
+    // 追加→即描画
+    state.tasks.unshift(row);
+    renderAll();
+
+    // フォームクリア（次の入力へ）
+    $('#rq-title').value=''; $('#rq-body').value=''; $('#rq-priority').value='mid';
+    $('#rq-due').value=''; $('#rq-tags').value=''; $('#rq-project').value=''; $('#rq-template').value='';
+
+    // 未解決の新カードへスクロール＆ハイライト
+    requestAnimationFrame(()=>{
+      const el = document.querySelector(`#rq-open .card[data-id="${row.id}"]`);
+      if(el){ el.scrollIntoView({behavior:'smooth', block:'nearest'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),850); }
+    });
+
+    
+    // === Supabase: insert to tasks (and refresh list) ===
+    (async () => {
+      try {
+        if (window.sb) {
+          const payload = {
+            title: row.title || '(無題)',
+            body: row.body || null,
+            priority: row.priority || 'mid',
+            due_at: row.due_at || null,
+            status: 'open',
+            tags: row.tags || [],
+            project: row.project || null
+          };
+          const { data, error } = await sb.from('tasks').insert(payload).select();
+          if (error) { console.warn('[insert error]', error); if(window.showToast) showToast('DB保存エラー: ' + error.message); }
+          else { console.log('[insert ok]', data); if(window.showToast) showToast('DBに保存OK (id:'+ (data?.[0]?.id ?? '?') +')'); if(window.__refresh_tasks__) window.__refresh_tasks__(); }
+        } else { console.warn('[insert skipped] sb undefined'); }
+      } catch(e){ console.warn('[insert exception]', e); }
+    })();
+showToast('依頼を送信しました');
+  });
+
+  // ===== Renderers =====
+  function renderAll(){ renderRequester(); renderApprover(); updateUrgent(); }
+
+  function renderRequester(){
+    if(!state.currentUser || state.currentUser.role!=='requester'){ return; }
+    const who = state.currentUser.name;
+    const open = state.tasks.filter(t=> (t.created_by_id ? t.created_by_id===state.currentUser.id : t.created_by_name===who) && t.status!=='confirmed');
+    const done = state.tasks.filter(t=> (t.created_by_id ? t.created_by_id===state.currentUser.id : t.created_by_name===who) && t.status==='confirmed' && !(t.archived_for||[]).includes(who));
+
+    // open
+    $('#rq-open').innerHTML='';
+    $('#rq-open-empty').classList.toggle('hidden', open.length>0);
+    open.forEach(t=> $('#rq-open').appendChild(cardRequesterOpen(t)));
+
+    // done
+    $('#rq-done').innerHTML='';
+    $('#rq-done-empty').classList.toggle('hidden', done.length>0);
+    done.forEach(t=> $('#rq-done').appendChild(cardRequesterDone(t, who)));
+  }
+
+  function cardRequesterOpen(t){
+    const wrap=document.createElement('div'); wrap.className='card'; wrap.dataset.id=t.id;
+    const due = t.due_at? `<span class="pill">期限: ${new Date(t.due_at).toLocaleString()}</span>`:'';
+    wrap.innerHTML = `
+      <div style="font-weight:700">${html(t.title)}</div>
+      <div class="row">
+        <span class="pill">優先度: ${t.priority}</span>
+        ${due}
+        ${t.project? `<span class="pill">PJ: ${html(t.project)}</span>`:''}
+        <span class="pill">状態: ${html(t.status)}</span>
+      </div>
+      ${t.body? `<div style="margin-top:8px">${html(t.body)}</div>`:''}
+      <div class="row" style="margin-top:10px;justify-content:space-between">
+        <button class="btn primary" data-act="hurry">急げ（通知）</button>
+        <span class="pill">急ぎ送信 ${t.nudge_count||0}回</span>
+      </div>
+    `;
+    wrap.querySelector('[data-act="hurry"]').addEventListener('click', ()=>{ t.nudge_count=(t.nudge_count||0)+1; t.last_nudged_at=new Date().toISOString(); showToast('囚人Pへ急ぎ通知を送信'); renderAll(); });
+    return wrap;
+  }
+
+  function cardRequesterDone(t, who){
+    const wrap=document.createElement('div'); wrap.className='card'; wrap.dataset.id=t.id;
+    wrap.innerHTML = `
+      <div style="font-weight:700">${html(t.title)}</div>
+      <div class="row">
+        ${t.project? `<span class="pill">PJ: ${html(t.project)}</span>`:''}
+        <span class="pill">状態: 確認済み</span>
+      </div>
+      ${t.body? `<div style="margin-top:8px">${html(t.body)}</div>`:''}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">
+        <button class="btn danger" data-act="archive">自分の履歴から消す</button>
+      </div>
+    `;
+    wrap.querySelector('[data-act="archive"]').addEventListener('click', ()=>{
+      const arr=t.archived_for||(t.archived_for=[]); if(!arr.includes(who)) arr.push(who);
+      animateRemove(wrap); setTimeout(()=>renderAll(),240);
+      showToast('履歴から消しました（あなたの画面のみ）');
+    });
+    return wrap;
+  }
+
+  function renderApprover(){
+    if(!state.currentUser || state.currentUser.role!=='approver'){ return; }
+    const open = state.tasks.filter(t=> t.status!=='confirmed');
+    const done = state.tasks.filter(t=> t.status==='confirmed');
+
+    // open
+    $('#ap-open').innerHTML='';
+    $('#ap-open-empty').classList.toggle('hidden', open.length>0);
+    open.forEach(t=> $('#ap-open').appendChild(cardApproverOpen(t)));
+
+    // done
+    $('#ap-done').innerHTML='';
+    $('#ap-done-empty').classList.toggle('hidden', done.length>0);
+    done.forEach(t=> $('#ap-done').appendChild(cardApproverDone(t)));
+  }
+
+  function cardApproverOpen(t){
+    const wrap=document.createElement('div'); wrap.className='card'; wrap.dataset.id=t.id;
+    const due = t.due_at? `<span class="pill">期限: ${new Date(t.due_at).toLocaleString()}</span>`:'';
+    wrap.innerHTML = `
+      <div style="font-weight:700">${html(t.title)}</div>
+      <div class="row">
+        <span class="pill">依頼: ${html(t.created_by_name)}</span>
+        <span class="pill">優先度: ${t.priority}</span>
+        ${due}
+        ${t.project? `<span class="pill">PJ: ${html(t.project)}</span>`:''}
+      </div>
+      ${t.body? `<div style="margin-top:8px">${html(t.body)}</div>`:''}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">
+        <button class="btn primary" data-act="ok">確認済み</button>
+      </div>
+    `;
+    wrap.querySelector('[data-act="ok"]').addEventListener('click', ()=>{ t.status='confirmed'; t.updated_at=new Date().toISOString(); renderAll(); });
+    return wrap;
+  }
+  function cardApproverDone(t){
+    const wrap=document.createElement('div'); wrap.className='card'; wrap.dataset.id=t.id;
+    wrap.innerHTML = `
+      <div style="font-weight:700">${html(t.title)}</div>
+      <div class="row">
+        <span class="pill">依頼: ${html(t.created_by_name)}</span>
+        <span class="pill">状態: 確認済み</span>
+      </div>
+      ${t.body? `<div style="margin-top:8px">${html(t.body)}</div>`:''}
+    `;
+    return wrap;
+  }
+
+  // ===== Urgent overlay =====
+  function updateUrgent(){
+    const box = $('#urgent'); if(!state.currentUser || state.currentUser.role!=='approver'){ box.classList.remove('show'); return; }
+    const urg = state.tasks.filter(t=> (t.nudge_count||0)>0 && t.status!=='confirmed').sort((a,b)=> new Date(b.last_nudged_at||0)-new Date(a.last_nudged_at||0));
+    if(!urg.length){ box.classList.remove('show'); return; }
+    const t = urg[0]; $('#urgent-body').innerHTML = `<div style="font-weight:700">${html(t.title)}</div><div class="pill">依頼: ${html(t.created_by_name)}</div>`;
+    box.classList.add('show');
+    $('#urgent-go').onclick = ()=>{
+      showPanel('approver');
+      setTimeout(()=>{
+        const el = document.querySelector(`#ap-open .card[data-id="${t.id}"]`);
+        if(el){ el.scrollIntoView({behavior:'smooth', block:'center'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),850); }
+      },40);
+    };
+  }
+
+  function animateRemove(el){
+    const h=el.getBoundingClientRect().height;
+    el.style.height=h+'px'; el.style.transition='height .22s ease, opacity .15s ease, transform .18s ease'; el.style.overflow='hidden';
+    requestAnimationFrame(()=>{ el.style.opacity='0'; el.style.transform='scale(.98)'; el.style.height='0px'; });
+    setTimeout(()=> el.remove(), 230);
+  }
+</script>
+
+<!-- Supabaseクライアント（CDN） -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- Confirm Tasks: 認証 & 初期設定ダイアログ（v3 手動ログインボタン付き） -->
+<script>
+(()=>{
+  const LS_URL = 'ct_sb_url';
+  const LS_KEY = 'ct_sb_anon';
+  const APPROVER_EMAILS = ["producer@example.com"]; // 囚人Pにしたいメール
+
+  // ===== スタイル =====
+  const css = `
+    #welcome { display:none !important; } /* 旧ダミー非表示 */
+    .ct_overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:9999}
+    .ct_card{background:#fff;min-width:320px;max-width:420px;padding:16px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .ct_card h3{margin:0 0 8px;font-size:18px}
+    .ct_card label{font-size:12px;color:#555}
+    .ct_card input{width:100%;margin:4px 0 8px;padding:10px 12px;border:1px solid #ddd;border-radius:8px}
+    .ct_row{display:flex;gap:8px;margin-top:8px}
+    .ct_row button{flex:1;padding:10px 12px;border:0;border-radius:8px;cursor:pointer}
+    .ct_primary{background:#111;color:#fff}
+    .ct_ghost{background:#eee}
+    .ct_msg{min-height:18px;font-size:12px;color:#d00;margin-top:6px}
+    #ct_btn_logout{position:fixed;top:12px;right:12px;z-index:9999;padding:8px 10px;border:0;border-radius:8px;background:#eee;display:none}
+    #ct_btn_settings{position:fixed;top:12px;left:12px;z-index:9999;padding:8px 10px;border:0;border-radius:8px;background:#eee}
+    #ct_btn_login{position:fixed;top:12px;left:92px;z-index:9999;padding:8px 10px;border:0;border-radius:8px;background:#eee}
+    #ct_status{position:fixed;top:12px;left:180px;z-index:9999;padding:8px 10px;background:#f6f6f6;border-radius:8px;font-size:12px;color:#333}
+  `;
+  const style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
+
+  // ===== 画面上部のボタン類 =====
+  
+  // グローバルstateへの安全なアクセス（const state は windowに乗らない対策）
+  function setCurrentUserSafe(user){
+    try {
+      if (typeof state !== 'undefined' && state && typeof state === 'object') {
+        state.currentUser = user;
+      } else if (globalThis && globalThis.state) {
+        globalThis.state.currentUser = user;
+      }
+    } catch (e) { /* noop */ }
+  }
+const btnSettings = document.createElement('button');
+  btnSettings.id='ct_btn_settings'; btnSettings.textContent='⚙ 設定';
+  const btnLogin = document.createElement('button');
+  btnLogin.id='ct_btn_login'; btnLogin.textContent='🔐 ログイン';
+  const btnLogout = document.createElement('button');
+  btnLogout.id='ct_btn_logout'; btnLogout.textContent='⏏ ログアウト';
+  const status = document.createElement('div');
+  status.id='ct_status'; status.textContent='未ログイン';
+  document.body.appendChild(btnSettings);
+  document.body.appendChild(btnLogin);
+  document.body.appendChild(btnLogout);
+  document.body.appendChild(status);
+
+  // ===== 設定ダイアログ =====
+  const ovSetup = document.createElement('div');
+  ovSetup.className='ct_overlay'; ovSetup.id='ct_setup_ov';
+  ovSetup.innerHTML = `
+    <div class="ct_card">
+      <h3>初期設定（Supabase）</h3>
+      <label>Project URL</label>
+      <input id="ct_url" type="text" placeholder="https://xxxx.supabase.co" />
+      <label>anon public key</label>
+      <input id="ct_key" type="text" placeholder="eyJ..." />
+      <div class="ct_row">
+        <button id="ct_save" class="ct_primary">保存して再読み込み</button>
+        <button id="ct_clear" class="ct_ghost">リセット</button>
+      </div>
+      <div class="ct_msg" id="ct_setup_msg"></div>
+    </div>
+  `;
+  document.body.appendChild(ovSetup);
+
+  // ===== ログインダイアログ =====
+  const ovAuth = document.createElement('div');
+  ovAuth.className='ct_overlay'; ovAuth.id='ct_auth_ov';
+  ovAuth.innerHTML = `
+    <div class="ct_card">
+      <h3>ログイン（メール＋パスワード）</h3>
+      <label>メール</label>
+      <input id="ct_auth_email" type="email" placeholder="you@example.com" autocomplete="email" />
+      <label>パスワード</label>
+      <input id="ct_auth_pass" type="password" placeholder="●●●●●●" autocomplete="current-password" />
+      <div class="ct_row">
+        <button id="ct_login" class="ct_primary">ログイン</button>
+        <button id="ct_signup" class="ct_ghost">新規登録</button>
+      </div>
+      <div class="ct_msg" id="ct_auth_msg"></div>
+    </div>
+  `;
+  document.body.appendChild(ovAuth);
+
+  const $ = (id)=>document.getElementById(id);
+  const show = (el)=>{ el.style.display='flex'; };
+  const hide = (el)=>{ el.style.display='none'; };
+  const msg = (t,c='#d00')=>{ const m=$('ct_auth_msg'); m.style.color=c; m.textContent=t||''; };
+
+  const env = {
+    url: localStorage.getItem(LS_URL) || '',
+    key: localStorage.getItem(LS_KEY) || ''
+  };
+  function refreshStatus(user){
+    if(!user){ status.textContent = '未ログイン'; return; }
+    status.textContent = 'ログイン中：' + (user.email || user.id);
+  }
+
+  // 設定UIイベント
+  btnSettings.onclick = () => {
+    $('ct_url').value = env.url;
+    $('ct_key').value = env.key;
+    $('ct_setup_msg').textContent='';
+    show(ovSetup);
+  };
+  $('ct_clear').onclick = () => {
+    localStorage.removeItem(LS_URL);
+    localStorage.removeItem(LS_KEY);
+    $('ct_setup_msg').style.color = '#0a0';
+    $('ct_setup_msg').textContent = '保存済みのURL/KEYを削除しました。';
+    $('ct_url').value = '';
+    $('ct_key').value = '';
+  };
+  $('ct_save').onclick = () => {
+    const url = $('ct_url').value.trim();
+    const key = $('ct_key').value.trim();
+    if(!url || !key){ $('ct_setup_msg').textContent='URLとKEYを両方入れてください。'; return; }
+    localStorage.setItem(LS_URL, url);
+    localStorage.setItem(LS_KEY, key);
+    location.reload();
+  };
+
+  // 必須設定がなければ設定ダイアログを出す
+  if(!env.url || !env.key){ show(ovSetup); }
+
+  // ===== Supabase 初期化（設定済みのときだけ） =====
+  let sb = null;
+  if(env.url && env.key){
+    if(!window.supabase){ alert('supabase-js の読み込みに失敗しました'); return; }
+    sb = window.supabase.createClient(env.url, env.key);
+
+    
+async function afterLogin(){
+      const { data:{ user } } = await sb.auth.getUser();
+      refreshStatus(user);
+      if(!user){ show(ovAuth); btnLogout.style.display='none'; return; }
+
+      // --- profiles 読み or 作成（失敗してもフォールバックでrequesterにする） ---
+      let prof = null;
+      try {
+        const sel = await sb.from('profiles').select('id,name,role').eq('id', user.id).maybeSingle();
+        if (sel.error) throw sel.error;
+        prof = sel.data;
+        if (!prof) {
+          const defaultName = (user.email||'user').split('@')[0];
+          const ins = await sb.from('profiles').insert({ id:user.id, name:defaultName, role:'requester' }).select().single();
+          if (ins.error) throw ins.error;
+          prof = ins.data;
+        }
+        // メール一致で approver に昇格
+        const wantApprover = APPROVER_EMAILS.map(e=>e.toLowerCase()).includes((user.email||'').toLowerCase());
+        if (wantApprover && prof.role!=='approver'){
+          const up = await sb.from('profiles').update({ role:'approver', name:'囚人P' }).eq('id', user.id).select().single();
+          if (!up.error) prof = up.data;
+        }
+      } catch(e){
+        // フォールバック
+        prof = { id: user.id, name: (user.email||'user').split('@')[0], role: 'requester' };
+      }
+
+      // 既存UIに反映
+      setCurrentUserSafe({ id: prof.id, name: prof.name, role: prof.role });
+      if(window.showPanel) window.showPanel(prof.role==='approver' ? 'approver' : 'requester');
+      if(window.renderAll) window.renderAll();
+      if(window.updateUrgent) window.updateUrgent();
+      if(window.showToast) window.showToast('ログイン：'+prof.name+'（'+prof.role+'）');
+
+      hide(ovAuth);
+      btnLogout.style.display='block';
+    }
+
+
+    // イベント
+    $('ct_login').onclick = async ()=>{
+      msg('');
+      const email = $('ct_auth_email').value.trim();
+      const password = $('ct_auth_pass').value;
+      if(!email || !password){ msg('メールとパスワードを入れてください'); return; }
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if(error){ msg('ログイン失敗: '+error.message); return; }
+      afterLogin();
+    };
+    $('ct_signup').onclick = async ()=>{
+      msg('');
+      const email = $('ct_auth_email').value.trim();
+      const password = $('ct_auth_pass').value;
+      if(!email || !password){ msg('メールとパスワードを入れてください'); return; }
+      const { error } = await sb.auth.signUp({ email, password });
+      if(error){ msg('登録失敗: '+error.message); return; }
+      msg('登録OK。メール確認が必要な設定の場合は受信箱をチェック。', '#0a0');
+    };
+
+    btnLogin.onclick = ()=>{ show(ovAuth); }; // 手動でいつでも出せる
+    btnLogout.onclick = async ()=>{
+      await sb.auth.signOut();
+      setCurrentUserSafe(null);
+      show(ovAuth);
+      btnLogout.style.display='none';
+      refreshStatus(null);
+      if(window.showToast) window.showToast('ログアウトしました');
+    };
+
+    // 起動時：状態復元（見えなくても手動ボタンから出せる）
+    sb.auth.getSession().then(({ data:{ session } })=>{
+      if(session){ afterLogin(); } else { refreshStatus(null); }
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
