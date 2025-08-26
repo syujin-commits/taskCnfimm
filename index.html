@@ -5,16 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>確認フロー（修正版）</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Noto Sans JP',sans-serif;background:#f6f7fb;margin:0;padding:24px}
-    .card{background:#fff;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.06);padding:20px;margin:14px 0}
-    .btn{background:#3b82f6;color:#fff;border:none;border-radius:10px;padding:10px 16px;cursor:pointer}
-    .muted{color:#777}
-    input,textarea{border:1px solid #ddd;border-radius:8px}
+    :root { --bg:#f6f7fb; --card:#fff; --shadow:0 4px 24px rgba(0,0,0,.06); --muted:#777; --line:#e5e7eb; --blue:#3b82f6;}
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Noto Sans JP',sans-serif;background:var(--bg);margin:0;padding:24px}
+    .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .bar .left{display:flex;gap:8px;align-items:center}
+    .btn{background:var(--blue);color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .ghost{background:#fff;color:#111;border:1px solid var(--line)}
+    .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px;margin:14px 0}
+    .title{font-weight:700;margin-bottom:8px}
+    .muted{color:var(--muted)}
+    input,textarea{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px}
+    .row{display:flex;gap:10px;align-items:center}
+    .grow{flex:1}
+    .list-item{border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0;background:#fcfdff}
+    .list-item .h{font-weight:600}
+    .small{font-size:12px;color:#888;margin-top:6px}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px}
+    @media(min-width:720px){ .grid{grid-template-columns:1fr 1fr} }
+    dialog{border:none;border-radius:12px;box-shadow:var(--shadow);padding:18px;max-width:560px;width:calc(100% - 24px)}
+    dialog::backdrop{background:rgba(0,0,0,.25)}
   </style>
 
-  <!-- Supabase JS (CDN) + robust initializer -->
+  <!-- Supabase JS (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
+  // -------- Supabase 初期化（localStorage → sb を生成） --------
   (function initSupabaseClient(){
     try{
       if(!window.supabase){ console.warn('[INIT] supabase library missing'); return; }
@@ -29,42 +46,105 @@
   </script>
 </head>
 <body>
-  <h2>確認フロー（修正版）</h2>
 
-  <!-- 送信フォーム（必要なら既存UIと置換） -->
-  <div class="card">
-    <div style="display:flex;gap:10px;align-items:center">
-      <input id="title" placeholder="タイトル" style="flex:1;padding:10px"/>
-      <input id="due" type="datetime-local" style="padding:10px"/>
-      <button class="btn" id="send">送信</button>
+  <!-- 上部バー：設定・認証 -->
+  <div class="bar">
+    <div class="left">
+      <button class="btn ghost" id="openSettings">⚙ 設定</button>
+      <span id="sessionState" class="muted">未ログイン</span>
     </div>
-    <div style="margin-top:10px">
-      <textarea id="body" placeholder="詳細" rows="4" style="width:100%;padding:10px"></textarea>
+    <div class="left">
+      <button class="btn ghost" id="login">🔐 ログイン</button>
+      <button class="btn ghost" id="logout">🚪 ログアウト</button>
     </div>
-    <div id="toast" class="muted" style="margin-top:8px"></div>
   </div>
 
-  <!-- 「あなたの未解決タスク」の**専用**差し込み枠 -->
+  <!-- 送信フォーム -->
   <div class="card">
-    <div style="font-weight:700">あなたの未解決タスク（アプリ側の表示枠）</div>
-    <div id="autolist" class="muted" style="margin-top:8px">読み込み中...</div>
+    <div class="title">依頼を送信</div>
+    <div class="grid">
+      <input id="title" class="grow" placeholder="タイトル" />
+      <input id="due" type="datetime-local" />
+    </div>
+    <div class="row" style="margin-top:10px">
+      <textarea id="body" class="grow" rows="4" placeholder="詳細"></textarea>
+    </div>
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <div id="toast" class="muted"></div>
+      <button id="send" class="btn">送信</button>
+    </div>
   </div>
+
+  <!-- 未解決タスク表示枠（アプリ側で完全管理） -->
+  <div class="card">
+    <div class="title">あなたの未解決タスク（アプリ枠）</div>
+    <div id="autolist" class="muted">読み込み中...</div>
+  </div>
+
+  <!-- 設定ダイアログ -->
+  <dialog id="settings">
+    <div class="title">初期設定（Supabase）</div>
+    <div style="display:grid;gap:8px;margin-top:8px">
+      <label>Project URL
+        <input id="set_url" placeholder="https://xxxxx.supabase.co" />
+      </label>
+      <label>anon public key
+        <textarea id="set_key" rows="3" placeholder="anon public key を貼り付け"></textarea>
+      </label>
+      <div class="row" style="justify-content:flex-end;margin-top:6px">
+        <button id="saveSettings" class="btn">保存して再読み込み</button>
+      </div>
+    </div>
+  </dialog>
 
 <script>
 const $ = (q)=>document.querySelector(q);
 const showToast=(msg)=>{ $('#toast').textContent = msg; };
 
-// --- 未解決タスクを #autolist に描画 ---
+// ---------- 設定（URL/Key） ----------
+$('#openSettings').onclick = () => {
+  $('#set_url').value = localStorage.getItem('project_url') || '';
+  $('#set_key').value = localStorage.getItem('anon_public_key') || '';
+  $('#settings').showModal();
+};
+$('#saveSettings').onclick = () => {
+  const url = $('#set_url').value.trim();
+  const key = $('#set_key').value.trim();
+  localStorage.setItem('project_url', url);
+  localStorage.setItem('anon_public_key', key);
+  if (window.__reinit_sb__) window.__reinit_sb__(url,key);
+  $('#settings').close();
+  location.reload();
+};
+
+// ---------- 認証 ----------
+async function refreshSessionLabel(){
+  if(!window.sb){ $('#sessionState').textContent='設定未完了'; return; }
+  const { data:{ user } } = await sb.auth.getUser();
+  $('#sessionState').textContent = user ? `ログイン中：${user.email}` : '未ログイン';
+}
+$('#login').onclick = async () => {
+  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
+  const email = prompt('メールアドレス');
+  const password = prompt('パスワード');
+  if(!email || !password) return;
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ alert('ログイン失敗：' + error.message); return; }
+  await refreshSessionLabel(); if(window.__refresh_tasks__) window.__refresh_tasks__();
+};
+$('#logout').onclick = async () => { if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__refresh_tasks__) window.__refresh_tasks__(); } };
+
+// ---------- タスク一覧（未解決） ----------
 window.__refresh_tasks__ = async function(){
   try{
-    if(!window.sb){ console.warn('[LIST] sb undefined'); return; }
-    const { data: { user } } = await sb.auth.getUser();
+    if(!window.sb){ $('#autolist').textContent='設定未完了'; return; }
+    const { data:{ user } } = await sb.auth.getUser();
     if(!user){ $('#autolist').textContent='未ログインです'; return; }
 
     const { data, error } = await sb.from('tasks')
       .select('id,title,body,priority,due_at,status,created_at')
-      .eq('created_by', user.id)
-      .eq('status','open')
+      .eq('created_by', user.id)          // 自分のタスクだけ
+      .eq('status','open')                // 未解決のみ
       .order('created_at',{ ascending:false })
       .limit(50);
 
@@ -72,22 +152,27 @@ window.__refresh_tasks__ = async function(){
 
     const fmt = s => (s==null? '' : String(s));
     $('#autolist').innerHTML =
-      (data&&data.length) ? data.map(t => `
-        <div style="border:1px solid #eee;border-radius:10px;padding:12px;margin:10px 0;background:#fcfdff">
-          <div style="font-weight:600;">${fmt(t.title)||'(無題)'}</div>
-          <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-          <div style="color:#888;margin-top:6px;font-size:12px;">
-            優先度:${fmt(t.priority)||'mid'} ${t.due_at? ' / 期日:'+ new Date(t.due_at).toLocaleString(): ''}
-          </div>
-        </div>`).join('')
-      : '<div class="muted">未解決タスクはありません</div>';
-
+      (data&&data.length)
+        ? data.map(t => `
+            <div class="list-item">
+              <div class="h">${fmt(t.title)||'(無題)'}</div>
+              <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+              <div class="small">
+                優先度:${fmt(t.priority)||'mid'}${t.due_at ? ' / 期日:' + new Date(t.due_at).toLocaleString() : ''}
+              </div>
+            </div>
+          `).join('')
+        : '<div class="muted">未解決タスクはありません</div>';
     console.log('[LIST] rendered', data?.length||0);
   }catch(e){ console.error('[LIST] exception', e); }
 };
 
-// --- 送信 → DB保存 → リスト更新 ---
-$('#send').addEventListener('click', async () => {
+// ---------- 送信（DB保存 → リスト更新） ----------
+let sending = false;
+$('#send').onclick = async () => {
+  if(sending) return;
+  sending = true; $('#send').disabled = true; setTimeout(()=>{$('#send').disabled=false; sending=false;},1500); // 二重送信防止(1.5s)
+
   const row = {
     title: $('#title').value.trim(),
     body: $('#body').value.trim() || null,
@@ -97,16 +182,16 @@ $('#send').addEventListener('click', async () => {
   };
   showToast('依頼を送信しました');
 
-  try {
-    if (!window.sb) return console.warn('[insert skipped] sb undefined');
+  try{
+    if(!window.sb){ showToast('設定未完了'); return; }
     const { data, error } = await sb.from('tasks').insert(row).select();
-    if (error) { console.warn('[insert error]', error); showToast('DB保存エラー: '+error.message); }
+    if(error){ console.warn('[insert error]', error); showToast('DB保存エラー: '+error.message); }
     else { showToast('DBに保存OK (id:'+(data?.[0]?.id ?? '?')+')'); if(window.__refresh_tasks__) window.__refresh_tasks__(); }
-  } catch(e) { console.warn('[insert exception]', e); }
-});
+  }catch(e){ console.warn('[insert exception]', e); showToast('例外: '+e); }
+};
 
-// 初回
-window.addEventListener('load', () => setTimeout(()=>window.__refresh_tasks__(), 250));
+// 初期描画
+window.addEventListener('load', () => { refreshSessionLabel(); setTimeout(()=>window.__refresh_tasks__(), 250); });
 </script>
 </body>
 </html>
