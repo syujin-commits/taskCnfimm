@@ -11,21 +11,21 @@
     .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}
     .bar .left{display:flex;gap:8px;align-items:center}
     .btn{background:var(--blue);color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+    .btn.ghost{background:#fff;color:#111;border:1px solid var(--line)}
     .btn:disabled{opacity:.5;cursor:not-allowed}
-    .ghost{background:#fff;color:#111;border:1px solid var(--line)}
     .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px;margin:14px 0}
     .title{font-weight:700;margin-bottom:8px}
     .muted{color:var(--muted)}
-    input,textarea{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px}
+    input,textarea{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;width:100%}
     .row{display:flex;gap:10px;align-items:center}
-    .grow{flex:1}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px}
     .list-item{border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0;background:#fcfdff}
     .list-item .h{font-weight:600}
     .small{font-size:12px;color:#888;margin-top:6px}
-    .grid{display:grid;grid-template-columns:1fr;gap:10px}
-    @media(min-width:720px){ .grid{grid-template-columns:1fr 1fr} }
+    @media(min-width:860px){ .grid{grid-template-columns:1fr 220px} }
     dialog{border:none;border-radius:12px;box-shadow:var(--shadow);padding:18px;max-width:560px;width:calc(100% - 24px)}
     dialog::backdrop{background:rgba(0,0,0,.25)}
+    .pill{font-size:12px;background:#eef2ff;color:#3741a0;border-radius:999px;padding:3px 10px;margin-left:8px}
   </style>
 
   <!-- Supabase JS (CDN) -->
@@ -40,7 +40,7 @@
       const key=pick(['anon_public_key','SUPABASE_ANON_KEY','supabase_key','anon_key']);
       if(url&&key){ window.sb = window.supabase.createClient(url,key); console.log('[INIT] sb created',{url});}
       else{ console.warn('[INIT] Cannot init sb. url/key not found in localStorage'); }
-      window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k); if(window.__refresh_tasks__) window.__refresh_tasks__(); };
+      window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k); if(window.__refresh_tasks__) window.__refresh_tasks__(); if(window.__apply_role__) window.__apply_role__(); };
     }catch(e){ console.error('[INIT] exception',e); }
   })();
   </script>
@@ -52,6 +52,7 @@
     <div class="left">
       <button class="btn ghost" id="openSettings">⚙ 設定</button>
       <span id="sessionState" class="muted">未ログイン</span>
+      <span id="roleBadge" class="pill" style="display:none"></span>
     </div>
     <div class="left">
       <button class="btn ghost" id="login">🔐 ログイン</button>
@@ -59,15 +60,15 @@
     </div>
   </div>
 
-  <!-- 送信フォーム -->
-  <div class="card">
+  <!-- 依頼フォーム（依頼者UI） -->
+  <div class="card" id="requestCard">
     <div class="title">依頼を送信</div>
     <div class="grid">
-      <input id="title" class="grow" placeholder="タイトル" />
+      <input id="title" placeholder="タイトル" />
       <input id="due" type="datetime-local" />
     </div>
     <div class="row" style="margin-top:10px">
-      <textarea id="body" class="grow" rows="4" placeholder="詳細"></textarea>
+      <textarea id="body" rows="4" placeholder="詳細"></textarea>
     </div>
     <div class="row" style="margin-top:10px;justify-content:space-between">
       <div id="toast" class="muted"></div>
@@ -75,10 +76,16 @@
     </div>
   </div>
 
-  <!-- 未解決タスク表示枠（アプリ側で完全管理） -->
-  <div class="card">
+  <!-- 依頼者：未解決タスク表示枠 -->
+  <div class="card" id="requestListCard">
     <div class="title">あなたの未解決タスク（アプリ枠）</div>
     <div id="autolist" class="muted">読み込み中...</div>
+  </div>
+
+  <!-- 承認者（囚人P）UI -->
+  <div class="card" id="approverCard" style="display:none">
+    <div class="title">承認待ちタスク（囚人P枠）</div>
+    <div id="approveList" class="muted">読み込み中...</div>
   </div>
 
   <!-- 設定ダイアログ -->
@@ -123,18 +130,22 @@ async function refreshSessionLabel(){
   const { data:{ user } } = await sb.auth.getUser();
   $('#sessionState').textContent = user ? `ログイン中：${user.email}` : '未ログイン';
 }
-$('#login').onclick = async () => {
-  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
-  const email = prompt('メールアドレス');
-  const password = prompt('パスワード');
-  if(!email || !password) return;
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){ alert('ログイン失敗：' + error.message); return; }
-  await refreshSessionLabel(); if(window.__refresh_tasks__) window.__refresh_tasks__();
-};
-$('#logout').onclick = async () => { if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__refresh_tasks__) window.__refresh_tasks__(); } };
 
-// ---------- タスク一覧（未解決） ----------
+// ---------- profiles 取得/作成（role: requester/approver/囚人P） ----------
+async function getOrCreateProfile() {
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user) return null;
+  let { data: prof, error } = await sb.from('profiles').select('id,name,role').eq('id', user.id).single();
+  if(error || !prof){
+    const payload = { id: user.id, name: user.email || 'user', role: 'requester' };
+    const { data: inserted, error: ierr } = await sb.from('profiles').insert(payload).select().single();
+    if(ierr) { console.warn('create profile error', ierr); return null; }
+    prof = inserted;
+  }
+  return prof;
+}
+
+// ---------- 依頼者：未解決タスクリスト ----------
 window.__refresh_tasks__ = async function(){
   try{
     if(!window.sb){ $('#autolist').textContent='設定未完了'; return; }
@@ -143,8 +154,8 @@ window.__refresh_tasks__ = async function(){
 
     const { data, error } = await sb.from('tasks')
       .select('id,title,body,priority,due_at,status,created_at')
-      .eq('created_by', user.id)          // 自分のタスクだけ
-      .eq('status','open')                // 未解決のみ
+      .eq('created_by', user.id)
+      .eq('status','open')
       .order('created_at',{ ascending:false })
       .limit(50);
 
@@ -158,20 +169,70 @@ window.__refresh_tasks__ = async function(){
               <div class="h">${fmt(t.title)||'(無題)'}</div>
               <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
               <div class="small">
-                優先度:${fmt(t.priority)||'mid'}${t.due_at ? ' / 期日:' + new Date(t.due_at).toLocaleString() : ''}
+                優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ new Date(t.due_at).toLocaleString():''}
               </div>
             </div>
           `).join('')
         : '<div class="muted">未解決タスクはありません</div>';
-    console.log('[LIST] rendered', data?.length||0);
   }catch(e){ console.error('[LIST] exception', e); }
 };
 
-// ---------- 送信（DB保存 → リスト更新） ----------
+// ---------- 承認者：承認待ちリスト（簡易：自分以外の open） ----------
+async function refreshApproveList() {
+  const box = $('#approveList');
+  box.textContent = '読み込み中...';
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user){ box.textContent = '未ログインです'; return; }
+
+  const { data, error } = await sb
+    .from('tasks')
+    .select('id,title,body,priority,due_at,status,created_by,created_at')
+    .neq('created_by', user.id)
+    .eq('status','open')
+    .order('created_at', { ascending:false })
+    .limit(50);
+
+  if(error){ console.warn('[APPROVE] error', error); box.textContent='読み込みエラー'; return; }
+
+  const fmt = v => v==null ? '' : String(v);
+  box.innerHTML = (data&&data.length)
+    ? data.map(t => `
+        <div class="list-item">
+          <div class="h">${fmt(t.title)||'(無題)'}</div>
+          <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+          <div class="small">
+            優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+new Date(t.due_at).toLocaleString():''}
+          </div>
+        </div>
+      `).join('')
+    : '<div class="muted">承認待ちはありません</div>';
+}
+
+// ---------- 役割に応じてUI切り替え ----------
+window.__apply_role__ = async function(){
+  const prof = await getOrCreateProfile();
+  const role = prof?.role || 'requester';
+  const isApprover = (role === 'approver' || role === '囚人P');
+
+  // バッジ表示
+  const badge = $('#roleBadge');
+  badge.style.display = 'inline-block';
+  badge.textContent = isApprover ? '承認者（囚人P）' : '依頼者';
+
+  // カード切替
+  $('#requestCard').style.display   = isApprover ? 'none' : '';
+  $('#requestListCard').style.display = isApprover ? 'none' : '';
+  $('#approverCard').style.display  = isApprover ? 'block' : 'none';
+
+  if(isApprover) await refreshApproveList();
+  else if(window.__refresh_tasks__) await window.__refresh_tasks__();
+};
+
+// ---------- 送信（DB保存 → リスト更新 / 二重送信防止） ----------
 let sending = false;
 $('#send').onclick = async () => {
   if(sending) return;
-  sending = true; $('#send').disabled = true; setTimeout(()=>{$('#send').disabled=false; sending=false;},1500); // 二重送信防止(1.5s)
+  sending = true; $('#send').disabled = true; setTimeout(()=>{$('#send').disabled=false; sending=false;},1500);
 
   const row = {
     title: $('#title').value.trim(),
@@ -190,8 +251,25 @@ $('#send').onclick = async () => {
   }catch(e){ console.warn('[insert exception]', e); showToast('例外: '+e); }
 };
 
-// 初期描画
-window.addEventListener('load', () => { refreshSessionLabel(); setTimeout(()=>window.__refresh_tasks__(), 250); });
+// ---------- ログイン/ログアウト ----------
+$('#login').onclick = async () => {
+  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
+  const email = prompt('メールアドレス');
+  const password = prompt('パスワード');
+  if(!email || !password) return;
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ alert('ログイン失敗：' + error.message); return; }
+  await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__();
+};
+$('#logout').onclick = async () => {
+  if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); }
+};
+
+// ---------- 初期描画 ----------
+window.addEventListener('load', async () => {
+  await refreshSessionLabel();
+  if(window.__apply_role__) await window.__apply_role__();
+});
 </script>
 </body>
 </html>
