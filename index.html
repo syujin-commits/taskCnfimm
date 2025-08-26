@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>確認フロー（修正版）</title>
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --shadow:0 4px 24px rgba(0,0,0,.06); --muted:#777; --line:#e5e7eb; --blue:#3b82f6;}
+    :root { --bg:#f6f7fb; --card:#fff; --shadow:0 4px 24px rgba(0,0,0,.06);
+      --muted:#777; --line:#e5e7eb; --blue:#3b82f6; --red:#ef4444; --green:#10b981;}
     *{box-sizing:border-box}
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Noto Sans JP',sans-serif;background:var(--bg);margin:0;padding:24px}
     .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}
     .bar .left{display:flex;gap:8px;align-items:center}
-    .btn{background:var(--blue);color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+    .btn{background:var(--blue);color:#fff;border:none;border-radius:10px;padding:9px 12px;cursor:pointer}
     .btn.ghost{background:#fff;color:#111;border:1px solid var(--line)}
+    .btn.red{background:var(--red)}
+    .btn.green{background:var(--green)}
+    .btn.sm{padding:6px 10px;font-size:13px}
     .btn:disabled{opacity:.5;cursor:not-allowed}
     .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px;margin:14px 0}
     .title{font-weight:700;margin-bottom:8px}
@@ -22,16 +26,15 @@
     .list-item{border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0;background:#fcfdff}
     .list-item .h{font-weight:600}
     .small{font-size:12px;color:#888;margin-top:6px}
+    .actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+    .pill{font-size:12px;background:#eef2ff;color:#3741a0;border-radius:999px;padding:3px 10px;margin-left:8px}
     @media(min-width:860px){ .grid{grid-template-columns:1fr 220px} }
     dialog{border:none;border-radius:12px;box-shadow:var(--shadow);padding:18px;max-width:560px;width:calc(100% - 24px)}
     dialog::backdrop{background:rgba(0,0,0,.25)}
-    .pill{font-size:12px;background:#eef2ff;color:#3741a0;border-radius:999px;padding:3px 10px;margin-left:8px}
   </style>
 
-  <!-- Supabase JS (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-  // -------- Supabase 初期化（localStorage → sb を生成） --------
   (function initSupabaseClient(){
     try{
       if(!window.supabase){ console.warn('[INIT] supabase library missing'); return; }
@@ -40,14 +43,14 @@
       const key=pick(['anon_public_key','SUPABASE_ANON_KEY','supabase_key','anon_key']);
       if(url&&key){ window.sb = window.supabase.createClient(url,key); console.log('[INIT] sb created',{url});}
       else{ console.warn('[INIT] Cannot init sb. url/key not found in localStorage'); }
-      window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k); if(window.__refresh_tasks__) window.__refresh_tasks__(); if(window.__apply_role__) window.__apply_role__(); };
+      window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k);
+        if(window.__refresh_tasks__) window.__refresh_tasks__(); if(window.__apply_role__) window.__apply_role__(); };
     }catch(e){ console.error('[INIT] exception',e); }
   })();
   </script>
 </head>
 <body>
 
-  <!-- 上部バー：設定・認証 -->
   <div class="bar">
     <div class="left">
       <button class="btn ghost" id="openSettings">⚙ 設定</button>
@@ -60,7 +63,7 @@
     </div>
   </div>
 
-  <!-- 依頼フォーム（依頼者UI） -->
+  <!-- 依頼フォーム -->
   <div class="card" id="requestCard">
     <div class="title">依頼を送信</div>
     <div class="grid">
@@ -76,16 +79,22 @@
     </div>
   </div>
 
-  <!-- 依頼者：未解決タスク表示枠 -->
+  <!-- 依頼者：未解決 -->
   <div class="card" id="requestListCard">
     <div class="title">あなたの未解決タスク（アプリ枠）</div>
     <div id="autolist" class="muted">読み込み中...</div>
   </div>
 
-  <!-- 承認者（囚人P）UI -->
+  <!-- 承認者：承認待ち -->
   <div class="card" id="approverCard" style="display:none">
     <div class="title">承認待ちタスク（囚人P枠）</div>
     <div id="approveList" class="muted">読み込み中...</div>
+  </div>
+
+  <!-- 承認者：承認済（履歴） -->
+  <div class="card" id="approvedHistoryCard" style="display:none">
+    <div class="title">承認済（履歴）</div>
+    <div id="approvedList" class="muted">読み込み中...</div>
   </div>
 
   <!-- 設定ダイアログ -->
@@ -107,31 +116,42 @@
 <script>
 const $ = (q)=>document.querySelector(q);
 const showToast=(msg)=>{ $('#toast').textContent = msg; };
+const fmt = s => (s==null? '' : String(s));
+const fmtDate = (v)=> v ? new Date(v).toLocaleString() : '';
 
-// ---------- 設定（URL/Key） ----------
+/* 設定 */
 $('#openSettings').onclick = () => {
   $('#set_url').value = localStorage.getItem('project_url') || '';
   $('#set_key').value = localStorage.getItem('anon_public_key') || '';
   $('#settings').showModal();
 };
 $('#saveSettings').onclick = () => {
-  const url = $('#set_url').value.trim();
-  const key = $('#set_key').value.trim();
-  localStorage.setItem('project_url', url);
-  localStorage.setItem('anon_public_key', key);
-  if (window.__reinit_sb__) window.__reinit_sb__(url,key);
-  $('#settings').close();
-  location.reload();
+  localStorage.setItem('project_url', $('#set_url').value.trim());
+  localStorage.setItem('anon_public_key', $('#set_key').value.trim());
+  if (window.__reinit_sb__) window.__reinit_sb__($('#set_url').value.trim(), $('#set_key').value.trim());
+  $('#settings').close(); location.reload();
 };
 
-// ---------- 認証 ----------
+/* 認証 */
 async function refreshSessionLabel(){
   if(!window.sb){ $('#sessionState').textContent='設定未完了'; return; }
   const { data:{ user } } = await sb.auth.getUser();
   $('#sessionState').textContent = user ? `ログイン中：${user.email}` : '未ログイン';
 }
+$('#login').onclick = async () => {
+  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
+  const email = prompt('メールアドレス');
+  const password = prompt('パスワード');
+  if(!email || !password) return;
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ alert('ログイン失敗：' + error.message); return; }
+  await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__();
+};
+$('#logout').onclick = async () => {
+  if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); }
+};
 
-// ---------- profiles 取得/作成（role: requester/approver/囚人P） ----------
+/* profiles 取得/作成（role: requester / approver / 囚人P） */
 async function getOrCreateProfile() {
   const { data:{ user } } = await sb.auth.getUser();
   if(!user) return null;
@@ -145,7 +165,7 @@ async function getOrCreateProfile() {
   return prof;
 }
 
-// ---------- 依頼者：未解決タスクリスト ----------
+/* 依頼者：未解決タスクリスト（急げボタン付き） */
 window.__refresh_tasks__ = async function(){
   try{
     if(!window.sb){ $('#autolist').textContent='設定未完了'; return; }
@@ -153,7 +173,7 @@ window.__refresh_tasks__ = async function(){
     if(!user){ $('#autolist').textContent='未ログインです'; return; }
 
     const { data, error } = await sb.from('tasks')
-      .select('id,title,body,priority,due_at,status,created_at')
+      .select('id,title,body,priority,due_at,status,created_at,nudge_count,last_nudged_at')
       .eq('created_by', user.id)
       .eq('status','open')
       .order('created_at',{ ascending:false })
@@ -161,7 +181,6 @@ window.__refresh_tasks__ = async function(){
 
     if(error){ console.warn('[LIST] error', error); $('#autolist').textContent='読み込みエラー'; return; }
 
-    const fmt = s => (s==null? '' : String(s));
     $('#autolist').innerHTML =
       (data&&data.length)
         ? data.map(t => `
@@ -169,7 +188,16 @@ window.__refresh_tasks__ = async function(){
               <div class="h">${fmt(t.title)||'(無題)'}</div>
               <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
               <div class="small">
-                優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ new Date(t.due_at).toLocaleString():''}
+                優先度:${fmt(t.priority)||'mid'} ${t.due_at? ' / 期日:'+ fmtDate(t.due_at):''}
+                ${t.nudge_count? ' / 急げ:'+t.nudge_count+'回':''}
+              </div>
+              <div class="actions">
+                <button class="btn ghost sm action" data-action="nudge" data-id="${t.id}" data-count="${t.nudge_count||0}">
+                  急げ（通知）
+                </button>
+                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">
+                  自分で完了
+                </button>
               </div>
             </div>
           `).join('')
@@ -177,12 +205,11 @@ window.__refresh_tasks__ = async function(){
   }catch(e){ console.error('[LIST] exception', e); }
 };
 
-// ---------- 承認者：承認待ちリスト（簡易：自分以外の open） ----------
+/* 承認者：承認待ち・履歴 */
 async function refreshApproveList() {
-  const box = $('#approveList');
-  box.textContent = '読み込み中...';
+  const box = $('#approveList'); box.textContent='読み込み中...';
   const { data:{ user } } = await sb.auth.getUser();
-  if(!user){ box.textContent = '未ログインです'; return; }
+  if(!user){ box.textContent='未ログインです'; return; }
 
   const { data, error } = await sb
     .from('tasks')
@@ -194,45 +221,99 @@ async function refreshApproveList() {
 
   if(error){ console.warn('[APPROVE] error', error); box.textContent='読み込みエラー'; return; }
 
-  const fmt = v => v==null ? '' : String(v);
   box.innerHTML = (data&&data.length)
     ? data.map(t => `
         <div class="list-item">
           <div class="h">${fmt(t.title)||'(無題)'}</div>
           <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-          <div class="small">
-            優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+new Date(t.due_at).toLocaleString():''}
+          <div class="small">優先度:${fmt(t.priority)||'mid'} ${t.due_at?' / 期日:'+fmtDate(t.due_at):''}</div>
+          <div class="actions">
+            <button class="btn green sm action" data-action="approve" data-id="${t.id}">確認</button>
+            <button class="btn ghost sm action" data-action="return" data-id="${t.id}">差し戻し</button>
+            <button class="btn ghost sm action" data-action="done" data-id="${t.id}">完了</button>
           </div>
-        </div>
-      `).join('')
+        </div>`).join('')
     : '<div class="muted">承認待ちはありません</div>';
 }
+async function refreshApprovedHistory() {
+  const box = $('#approvedList'); box.textContent='読み込み中...';
+  const { data, error } = await sb
+    .from('tasks')
+    .select('id,title,body,priority,due_at,status,updated_at,created_at')
+    .eq('status','approved')
+    .order('updated_at', { ascending:false })
+    .limit(30);
+  if(error){ console.warn('[HIST] error', error); box.textContent='読み込みエラー'; return; }
+  box.innerHTML = (data&&data.length)
+    ? data.map(t => `
+        <div class="list-item">
+          <div class="h">${fmt(t.title)||'(無題)'}</div>
+          <div class="small">承認日時: ${fmtDate(t.updated_at)||fmtDate(t.created_at)||''}</div>
+        </div>`).join('')
+    : '<div class="muted">履歴はありません</div>';
+}
 
-// ---------- 役割に応じてUI切り替え ----------
+/* 役割切替 */
 window.__apply_role__ = async function(){
   const prof = await getOrCreateProfile();
   const role = prof?.role || 'requester';
   const isApprover = (role === 'approver' || role === '囚人P');
 
-  // バッジ表示
-  const badge = $('#roleBadge');
-  badge.style.display = 'inline-block';
+  const badge = $('#roleBadge'); badge.style.display='inline-block';
   badge.textContent = isApprover ? '承認者（囚人P）' : '依頼者';
 
-  // カード切替
-  $('#requestCard').style.display   = isApprover ? 'none' : '';
-  $('#requestListCard').style.display = isApprover ? 'none' : '';
-  $('#approverCard').style.display  = isApprover ? 'block' : 'none';
+  $('#requestCard').style.display    = isApprover ? 'none' : '';
+  $('#requestListCard').style.display= isApprover ? 'none' : '';
+  $('#approverCard').style.display   = isApprover ? 'block' : 'none';
+  $('#approvedHistoryCard').style.display = isApprover ? 'block' : 'none';
 
-  if(isApprover) await refreshApproveList();
-  else if(window.__refresh_tasks__) await window.__refresh_tasks__();
+  if(isApprover){ await refreshApproveList(); await refreshApprovedHistory(); }
+  else{ if(window.__refresh_tasks__) await window.__refresh_tasks__(); }
 };
 
-// ---------- 送信（DB保存 → リスト更新 / 二重送信防止） ----------
-let sending = false;
+/* アクション（イベント委譲） */
+document.addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.action'); if(!btn) return;
+  const id = +btn.dataset.id; const act = btn.dataset.action;
+
+  try{
+    if(act==='nudge'){
+      const count = +(btn.dataset.count||0)+1;
+      const { error } = await sb.from('tasks').update({
+        nudge_count: count, last_nudged_at: new Date().toISOString()
+      }).eq('id', id);
+      if(error) return alert('急げエラー: '+error.message);
+      btn.dataset.count = String(count);
+      btn.textContent = '急げ（通知）';
+      await window.__refresh_tasks__();
+
+    }else if(act==='approve'){
+      const { error } = await sb.from('tasks').update({ status:'approved' }).eq('id', id);
+      if(error) return alert('承認エラー: '+error.message);
+      await refreshApproveList(); await refreshApprovedHistory();
+
+    }else if(act==='return'){
+      const reason = prompt('差し戻し理由（任意）'); // 必要なら tasks に return_reason を追加してください
+      const { error } = await sb.from('tasks').update({ status:'returned' }).eq('id', id);
+      if(error) return alert('差し戻しエラー: '+error.message);
+      await refreshApproveList();
+
+    }else if(act==='done'){
+      const { error } = await sb.from('tasks').update({ status:'done' }).eq('id', id);
+      if(error) return alert('完了エラー: '+error.message);
+      // 依頼者/承認者どちらからでも使える
+      await window.__refresh_tasks__().catch(()=>{});
+      await refreshApproveList().catch(()=>{});
+      await refreshApprovedHistory().catch(()=>{});
+    }
+  }catch(err){ alert('処理中に例外: '+err); }
+});
+
+/* 送信（保存→リスト更新） */
+let sending=false;
 $('#send').onclick = async () => {
   if(sending) return;
-  sending = true; $('#send').disabled = true; setTimeout(()=>{$('#send').disabled=false; sending=false;},1500);
+  sending = true; $('#send').disabled=true; setTimeout(()=>{$('#send').disabled=false;sending=false;},1200);
 
   const row = {
     title: $('#title').value.trim(),
@@ -251,21 +332,7 @@ $('#send').onclick = async () => {
   }catch(e){ console.warn('[insert exception]', e); showToast('例外: '+e); }
 };
 
-// ---------- ログイン/ログアウト ----------
-$('#login').onclick = async () => {
-  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
-  const email = prompt('メールアドレス');
-  const password = prompt('パスワード');
-  if(!email || !password) return;
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){ alert('ログイン失敗：' + error.message); return; }
-  await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__();
-};
-$('#logout').onclick = async () => {
-  if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); }
-};
-
-// ---------- 初期描画 ----------
+/* 初期表示 */
 window.addEventListener('load', async () => {
   await refreshSessionLabel();
   if(window.__apply_role__) await window.__apply_role__();
