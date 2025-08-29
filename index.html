@@ -44,7 +44,9 @@
       if(url&&key){ window.sb = window.supabase.createClient(url,key); console.log('[INIT] sb created',{url});}
       else{ console.warn('[INIT] Cannot init sb. url/key not found in localStorage'); }
       window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k);
-        if(window.__refresh_tasks__) window.__refresh_tasks__(); if(window.__apply_role__) window.__apply_role__(); };
+        if(window.__refresh_open__) window.__refresh_open__();
+        if(window.__refresh_returned__) window.__refresh_returned__();
+        if(window.__apply_role__) window.__apply_role__(); };
     }catch(e){ console.error('[INIT] exception',e); }
   })();
   </script>
@@ -63,7 +65,7 @@
     </div>
   </div>
 
-  <!-- 依頼フォーム -->
+  <!-- 依頼フォーム（依頼者UI） -->
   <div class="card" id="requestCard">
     <div class="title">依頼を送信</div>
     <div class="grid">
@@ -77,6 +79,12 @@
       <div id="toast" class="muted"></div>
       <button id="send" class="btn">送信</button>
     </div>
+  </div>
+
+  <!-- 依頼者：差し戻し（要対応） -->
+  <div class="card" id="returnedCard">
+    <div class="title">差し戻し（要対応）</div>
+    <div id="returnedList" class="muted">読み込み中...</div>
   </div>
 
   <!-- 依頼者：未解決 -->
@@ -101,12 +109,8 @@
   <dialog id="settings">
     <div class="title">初期設定（Supabase）</div>
     <div style="display:grid;gap:8px;margin-top:8px">
-      <label>Project URL
-        <input id="set_url" placeholder="https://xxxxx.supabase.co" />
-      </label>
-      <label>anon public key
-        <textarea id="set_key" rows="3" placeholder="anon public key を貼り付け"></textarea>
-      </label>
+      <label>Project URL <input id="set_url" placeholder="https://xxxxx.supabase.co" /></label>
+      <label>anon public key <textarea id="set_key" rows="3" placeholder="anon public key を貼り付け"></textarea></label>
       <div class="row" style="justify-content:flex-end;margin-top:6px">
         <button id="saveSettings" class="btn">保存して再読み込み</button>
       </div>
@@ -140,8 +144,7 @@ async function refreshSessionLabel(){
 }
 $('#login').onclick = async () => {
   if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
-  const email = prompt('メールアドレス');
-  const password = prompt('パスワード');
+  const email = prompt('メールアドレス'); const password = prompt('パスワード');
   if(!email || !password) return;
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){ alert('ログイン失敗：' + error.message); return; }
@@ -165,8 +168,8 @@ async function getOrCreateProfile() {
   return prof;
 }
 
-/* 依頼者：未解決タスクリスト（急げボタン付き） */
-window.__refresh_tasks__ = async function(){
+/* 依頼者：未解決（open） */
+window.__refresh_open__ = async function(){
   try{
     if(!window.sb){ $('#autolist').textContent='設定未完了'; return; }
     const { data:{ user } } = await sb.auth.getUser();
@@ -174,12 +177,10 @@ window.__refresh_tasks__ = async function(){
 
     const { data, error } = await sb.from('tasks')
       .select('id,title,body,priority,due_at,status,created_at,nudge_count,last_nudged_at')
-      .eq('created_by', user.id)
-      .eq('status','open')
-      .order('created_at',{ ascending:false })
-      .limit(50);
+      .eq('created_by', user.id).eq('status','open')
+      .order('created_at',{ ascending:false }).limit(50);
 
-    if(error){ console.warn('[LIST] error', error); $('#autolist').textContent='読み込みエラー'; return; }
+    if(error){ console.warn('[OPEN] error', error); $('#autolist').textContent='読み込みエラー'; return; }
 
     $('#autolist').innerHTML =
       (data&&data.length)
@@ -187,40 +188,57 @@ window.__refresh_tasks__ = async function(){
             <div class="list-item">
               <div class="h">${fmt(t.title)||'(無題)'}</div>
               <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-              <div class="small">
-                優先度:${fmt(t.priority)||'mid'} ${t.due_at? ' / 期日:'+ fmtDate(t.due_at):''}
+              <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ fmtDate(t.due_at):''}
                 ${t.nudge_count? ' / 急げ:'+t.nudge_count+'回':''}
               </div>
               <div class="actions">
-                <button class="btn ghost sm action" data-action="nudge" data-id="${t.id}" data-count="${t.nudge_count||0}">
-                  急げ（通知）
-                </button>
-                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">
-                  自分で完了
-                </button>
+                <button class="btn ghost sm action" data-action="nudge" data-id="${t.id}" data-count="${t.nudge_count||0}">急げ（通知）</button>
+                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">自分で完了</button>
               </div>
-            </div>
-          `).join('')
+            </div>`).join('')
         : '<div class="muted">未解決タスクはありません</div>';
-  }catch(e){ console.error('[LIST] exception', e); }
+  }catch(e){ console.error('[OPEN] exception', e); }
 };
 
-/* 承認者：承認待ち・履歴 */
+/* 依頼者：差し戻し（returned） */
+window.__refresh_returned__ = async function(){
+  try{
+    if(!window.sb){ $('#returnedList').textContent='設定未完了'; return; }
+    const { data:{ user } } = await sb.auth.getUser();
+    if(!user){ $('#returnedList').textContent='未ログインです'; return; }
+
+    const { data, error } = await sb.from('tasks')
+      .select('id,title,body,priority,due_at,status,created_at')
+      .eq('created_by', user.id).eq('status','returned')
+      .order('created_at',{ ascending:false }).limit(50);
+
+    if(error){ console.warn('[RET] error', error); $('#returnedList').textContent='読み込みエラー'; return; }
+
+    $('#returnedList').innerHTML =
+      (data&&data.length)
+        ? data.map(t => `
+            <div class="list-item">
+              <div class="h">${fmt(t.title)||'(無題)'}</div>
+              <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+              <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ fmtDate(t.due_at):''}</div>
+              <div class="actions">
+                <button class="btn green sm action" data-action="reopen" data-id="${t.id}">再確認依頼</button>
+                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">完了</button>
+              </div>
+            </div>`).join('')
+        : '<div class="muted">差し戻しはありません</div>';
+  }catch(e){ console.error('[RET] exception', e); }
+};
+
+/* 承認者：承認待ち（open）＆履歴（approved） */
 async function refreshApproveList() {
   const box = $('#approveList'); box.textContent='読み込み中...';
-  const { data:{ user } } = await sb.auth.getUser();
-  if(!user){ box.textContent='未ログインです'; return; }
-
-  const { data, error } = await sb
-    .from('tasks')
+  const { data:{ user } } = await sb.auth.getUser(); if(!user){ box.textContent='未ログインです'; return; }
+  const { data, error } = await sb.from('tasks')
     .select('id,title,body,priority,due_at,status,created_by,created_at')
-    .neq('created_by', user.id)
-    .eq('status','open')
-    .order('created_at', { ascending:false })
-    .limit(50);
-
+    .neq('created_by', user.id).eq('status','open')
+    .order('created_at', { ascending:false }).limit(50);
   if(error){ console.warn('[APPROVE] error', error); box.textContent='読み込みエラー'; return; }
-
   box.innerHTML = (data&&data.length)
     ? data.map(t => `
         <div class="list-item">
@@ -237,19 +255,13 @@ async function refreshApproveList() {
 }
 async function refreshApprovedHistory() {
   const box = $('#approvedList'); box.textContent='読み込み中...';
-  const { data, error } = await sb
-    .from('tasks')
-    .select('id,title,body,priority,due_at,status,updated_at,created_at')
-    .eq('status','approved')
-    .order('updated_at', { ascending:false })
-    .limit(30);
+  const { data, error } = await sb.from('tasks')
+    .select('id,title,updated_at,created_at').eq('status','approved')
+    .order('updated_at', { ascending:false }).limit(30);
   if(error){ console.warn('[HIST] error', error); box.textContent='読み込みエラー'; return; }
   box.innerHTML = (data&&data.length)
-    ? data.map(t => `
-        <div class="list-item">
-          <div class="h">${fmt(t.title)||'(無題)'}</div>
-          <div class="small">承認日時: ${fmtDate(t.updated_at)||fmtDate(t.created_at)||''}</div>
-        </div>`).join('')
+    ? data.map(t => `<div class="list-item"><div class="h">${fmt(t.title)||'(無題)'}</div>
+        <div class="small">承認日時: ${fmtDate(t.updated_at)||fmtDate(t.created_at)||''}</div></div>`).join('')
     : '<div class="muted">履歴はありません</div>';
 }
 
@@ -262,13 +274,14 @@ window.__apply_role__ = async function(){
   const badge = $('#roleBadge'); badge.style.display='inline-block';
   badge.textContent = isApprover ? '承認者（囚人P）' : '依頼者';
 
-  $('#requestCard').style.display    = isApprover ? 'none' : '';
-  $('#requestListCard').style.display= isApprover ? 'none' : '';
-  $('#approverCard').style.display   = isApprover ? 'block' : 'none';
+  $('#requestCard').style.display      = isApprover ? 'none' : '';
+  $('#requestListCard').style.display  = isApprover ? 'none' : '';
+  $('#returnedCard').style.display     = isApprover ? 'none' : '';
+  $('#approverCard').style.display     = isApprover ? 'block' : 'none';
   $('#approvedHistoryCard').style.display = isApprover ? 'block' : 'none';
 
   if(isApprover){ await refreshApproveList(); await refreshApprovedHistory(); }
-  else{ if(window.__refresh_tasks__) await window.__refresh_tasks__(); }
+  else { await window.__refresh_returned__(); await window.__refresh_open__(); }
 };
 
 /* アクション（イベント委譲） */
@@ -283,9 +296,7 @@ document.addEventListener('click', async (e)=>{
         nudge_count: count, last_nudged_at: new Date().toISOString()
       }).eq('id', id);
       if(error) return alert('急げエラー: '+error.message);
-      btn.dataset.count = String(count);
-      btn.textContent = '急げ（通知）';
-      await window.__refresh_tasks__();
+      await window.__refresh_open__();
 
     }else if(act==='approve'){
       const { error } = await sb.from('tasks').update({ status:'approved' }).eq('id', id);
@@ -293,18 +304,23 @@ document.addEventListener('click', async (e)=>{
       await refreshApproveList(); await refreshApprovedHistory();
 
     }else if(act==='return'){
-      const reason = prompt('差し戻し理由（任意）'); // 必要なら tasks に return_reason を追加してください
       const { error } = await sb.from('tasks').update({ status:'returned' }).eq('id', id);
       if(error) return alert('差し戻しエラー: '+error.message);
-      await refreshApproveList();
+      await refreshApproveList();             // 承認待ちから消える
+      await window.__refresh_returned__();    // 依頼者側の差し戻しに入る（次回表示時）
+
+    }else if(act==='reopen'){
+      const { error } = await sb.from('tasks').update({ status:'open' }).eq('id', id);
+      if(error) return alert('再確認依頼エラー: '+error.message);
+      await window.__refresh_returned__(); await window.__refresh_open__();
 
     }else if(act==='done'){
       const { error } = await sb.from('tasks').update({ status:'done' }).eq('id', id);
       if(error) return alert('完了エラー: '+error.message);
-      // 依頼者/承認者どちらからでも使える
-      await window.__refresh_tasks__().catch(()=>{});
+      // 両画面から消す
+      await window.__refresh_returned__().catch(()=>{});
+      await window.__refresh_open__().catch(()=>{});
       await refreshApproveList().catch(()=>{});
-      await refreshApprovedHistory().catch(()=>{});
     }
   }catch(err){ alert('処理中に例外: '+err); }
 });
@@ -328,7 +344,8 @@ $('#send').onclick = async () => {
     if(!window.sb){ showToast('設定未完了'); return; }
     const { data, error } = await sb.from('tasks').insert(row).select();
     if(error){ console.warn('[insert error]', error); showToast('DB保存エラー: '+error.message); }
-    else { showToast('DBに保存OK (id:'+(data?.[0]?.id ?? '?')+')'); if(window.__refresh_tasks__) window.__refresh_tasks__(); }
+    else { showToast('DBに保存OK (id:'+(data?.[0]?.id ?? '?')+')');
+      await window.__refresh_open__(); }
   }catch(e){ console.warn('[insert exception]', e); showToast('例外: '+e); }
 };
 
