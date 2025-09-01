@@ -1,3 +1,4 @@
+<!-- ここから index.html 丸ごと。前回のものを全削除して貼り付けてください -->
 <!doctype html>
 <html lang="ja">
 <head>
@@ -41,11 +42,9 @@
       const pick=(keys)=>{for(const k of keys){const v=localStorage.getItem(k);if(v&&v.trim())return v.trim();}return null;}
       const url=pick(['project_url','SUPABASE_URL','supabase_url','sb_url']);
       const key=pick(['anon_public_key','SUPABASE_ANON_KEY','supabase_key','anon_key']);
-      if(url&&key){ window.sb = window.supabase.createClient(url,key); console.log('[INIT] sb created',{url});}
+      if(url&&key){ window.sb = window.supabase.createClient(url,key); }
       else{ console.warn('[INIT] Cannot init sb. url/key not found in localStorage'); }
       window.__reinit_sb__=(u,k)=>{ if(!(u&&k)||!window.supabase) return; window.sb=window.supabase.createClient(u,k);
-        if(window.__refresh_open__) window.__refresh_open__();
-        if(window.__refresh_returned__) window.__refresh_returned__();
         if(window.__apply_role__) window.__apply_role__(); };
     }catch(e){ console.error('[INIT] exception',e); }
   })();
@@ -65,45 +64,30 @@
     </div>
   </div>
 
-  <!-- 依頼フォーム（依頼者UI） -->
+  <!-- 依頼フォーム -->
   <div class="card" id="requestCard">
     <div class="title">依頼を送信</div>
     <div class="grid">
       <input id="title" placeholder="タイトル" />
       <input id="due" type="datetime-local" />
     </div>
-    <div class="row" style="margin-top:10px">
-      <textarea id="body" rows="4" placeholder="詳細"></textarea>
-    </div>
+    <div class="row" style="margin-top:10px"><textarea id="body" rows="4" placeholder="詳細"></textarea></div>
     <div class="row" style="margin-top:10px;justify-content:space-between">
-      <div id="toast" class="muted"></div>
-      <button id="send" class="btn">送信</button>
+      <div id="toast" class="muted"></div><button id="send" class="btn">送信</button>
     </div>
   </div>
 
-  <!-- 依頼者：差し戻し（要対応） -->
-  <div class="card" id="returnedCard">
-    <div class="title">差し戻し（要対応）</div>
-    <div id="returnedList" class="muted">読み込み中...</div>
-  </div>
-
+  <!-- 依頼者：差し戻し -->
+  <div class="card" id="returnedCard"><div class="title">差し戻し（要対応）</div><div id="returnedList" class="muted">読み込み中...</div></div>
+  <!-- 依頼者：確認済（approved） -->
+  <div class="card" id="approvedForRequesterCard"><div class="title">確認済（要最終処理）</div><div id="approvedForRequesterList" class="muted">読み込み中...</div></div>
   <!-- 依頼者：未解決 -->
-  <div class="card" id="requestListCard">
-    <div class="title">あなたの未解決タスク（アプリ枠）</div>
-    <div id="autolist" class="muted">読み込み中...</div>
-  </div>
+  <div class="card" id="requestListCard"><div class="title">あなたの未解決タスク（アプリ枠）</div><div id="autolist" class="muted">読み込み中...</div></div>
 
   <!-- 承認者：承認待ち -->
-  <div class="card" id="approverCard" style="display:none">
-    <div class="title">承認待ちタスク（囚人P枠）</div>
-    <div id="approveList" class="muted">読み込み中...</div>
-  </div>
-
+  <div class="card" id="approverCard" style="display:none"><div class="title">承認待ちタスク（囚人P枠）</div><div id="approveList" class="muted">読み込み中...</div></div>
   <!-- 承認者：承認済（履歴） -->
-  <div class="card" id="approvedHistoryCard" style="display:none">
-    <div class="title">承認済（履歴）</div>
-    <div id="approvedList" class="muted">読み込み中...</div>
-  </div>
+  <div class="card" id="approvedHistoryCard" style="display:none"><div class="title">承認済（履歴）</div><div id="approvedList" class="muted">読み込み中...</div></div>
 
   <!-- 設定ダイアログ -->
   <dialog id="settings">
@@ -111,249 +95,151 @@
     <div style="display:grid;gap:8px;margin-top:8px">
       <label>Project URL <input id="set_url" placeholder="https://xxxxx.supabase.co" /></label>
       <label>anon public key <textarea id="set_key" rows="3" placeholder="anon public key を貼り付け"></textarea></label>
-      <div class="row" style="justify-content:flex-end;margin-top:6px">
-        <button id="saveSettings" class="btn">保存して再読み込み</button>
-      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:6px"><button id="saveSettings" class="btn">保存して再読み込み</button></div>
     </div>
   </dialog>
 
 <script>
-const $ = (q)=>document.querySelector(q);
-const showToast=(msg)=>{ $('#toast').textContent = msg; };
-const fmt = s => (s==null? '' : String(s));
-const fmtDate = (v)=> v ? new Date(v).toLocaleString() : '';
+const $=(q)=>document.querySelector(q);
+const showToast=(m)=>{ $('#toast').textContent=m;};
+const fmt=(s)=> s==null?'':String(s);
+const fmtDate=(v)=> v?new Date(v).toLocaleString():'';
 
 /* 設定 */
-$('#openSettings').onclick = () => {
-  $('#set_url').value = localStorage.getItem('project_url') || '';
-  $('#set_key').value = localStorage.getItem('anon_public_key') || '';
-  $('#settings').showModal();
-};
-$('#saveSettings').onclick = () => {
-  localStorage.setItem('project_url', $('#set_url').value.trim());
-  localStorage.setItem('anon_public_key', $('#set_key').value.trim());
-  if (window.__reinit_sb__) window.__reinit_sb__($('#set_url').value.trim(), $('#set_key').value.trim());
-  $('#settings').close(); location.reload();
-};
+$('#openSettings').onclick=()=>{ $('#set_url').value=localStorage.getItem('project_url')||''; $('#set_key').value=localStorage.getItem('anon_public_key')||''; $('#settings').showModal(); };
+$('#saveSettings').onclick=()=>{ localStorage.setItem('project_url',$('#set_url').value.trim()); localStorage.setItem('anon_public_key',$('#set_key').value.trim()); if(window.__reinit_sb__) window.__reinit_sb__($('#set_url').value.trim(),$('#set_key').value.trim()); $('#settings').close(); location.reload(); };
 
 /* 認証 */
-async function refreshSessionLabel(){
-  if(!window.sb){ $('#sessionState').textContent='設定未完了'; return; }
-  const { data:{ user } } = await sb.auth.getUser();
-  $('#sessionState').textContent = user ? `ログイン中：${user.email}` : '未ログイン';
+async function refreshSessionLabel(){ if(!window.sb){ $('#sessionState').textContent='設定未完了'; return; } const {data:{user}}=await sb.auth.getUser(); $('#sessionState').textContent=user?`ログイン中：${user.email}`:'未ログイン'; }
+$('#login').onclick=async()=>{ if(!window.sb){ alert('先に設定でURL/Keyを保存'); return;} const email=prompt('メールアドレス'); const password=prompt('パスワード'); if(!email||!password) return; const {error}=await sb.auth.signInWithPassword({email,password}); if(error){ alert('ログイン失敗：'+error.message); return;} await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); };
+$('#logout').onclick=async()=>{ if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); } };
+
+/* profiles 取得/作成（role: requester / approver） */
+async function getOrCreateProfile(){ const {data:{user}}=await sb.auth.getUser(); if(!user) return null;
+  let {data:prof,error}=await sb.from('profiles').select('id,name,role').eq('id',user.id).single();
+  if(error||!prof){ const payload={id:user.id,name:user.email||'user',role:'requester'}; const {data:ins, error:ierr}=await sb.from('profiles').insert(payload).select().single(); if(ierr){ console.warn('create profile error',ierr); return null;} prof=ins; }
+  return prof; }
+
+/* ====== 依頼者：open / returned / approved を表示 ====== */
+window.__refresh_open__=async function(){
+  if(!window.sb){ $('#autolist').textContent='設定未完了'; return;}
+  const {data:{user}}=await sb.auth.getUser(); if(!user){ $('#autolist').textContent='未ログインです'; return;}
+  const {data,error}=await sb.from('tasks').select('id,title,body,priority,due_at,status,created_at,nudge_count,last_nudged_at').eq('created_by',user.id).eq('status','open').order('created_at',{ascending:false}).limit(50);
+  if(error){ $('#autolist').textContent='読み込みエラー'; return;}
+  $('#autolist').innerHTML=(data&&data.length)?data.map(t=>`
+    <div class="list-item">
+      <div class="h">${fmt(t.title)||'(無題)'}</div>
+      <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+      <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+fmtDate(t.due_at):''}${t.nudge_count?' / 急げ:'+t.nudge_count+'回':''}</div>
+      <div class="actions">
+        <button class="btn ghost sm action" data-action="nudge" data-id="${t.id}" data-count="${t.nudge_count||0}">急げ</button>
+        <button class="btn ghost sm action" data-action="done"  data-id="${t.id}">自分で完了</button>
+      </div>
+    </div>`).join(''):'<div class="muted">未解決タスクはありません</div>';
+};
+window.__refresh_returned__=async function(){
+  if(!window.sb){ $('#returnedList').textContent='設定未完了'; return;}
+  const {data:{user}}=await sb.auth.getUser(); if(!user){ $('#returnedList').textContent='未ログインです'; return;}
+  const {data,error}=await sb.from('tasks').select('id,title,body,priority,due_at,status,created_at').eq('created_by',user.id).eq('status','returned').order('created_at',{ascending:false}).limit(50);
+  if(error){ $('#returnedList').textContent='読み込みエラー'; return;}
+  $('#returnedList').innerHTML=(data&&data.length)?data.map(t=>`
+    <div class="list-item">
+      <div class="h">${fmt(t.title)||'(無題)'}</div>
+      <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+      <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+fmtDate(t.due_at):''}</div>
+      <div class="actions">
+        <button class="btn green sm action" data-action="reopen" data-id="${t.id}">再確認依頼</button>
+        <button class="btn ghost sm action" data-action="done"   data-id="${t.id}">完了</button>
+      </div>
+    </div>`).join(''):'<div class="muted">差し戻しはありません</div>';
+};
+window.__refresh_approved_for_requester__=async function(){
+  if(!window.sb){ $('#approvedForRequesterList').textContent='設定未完了'; return;}
+  const {data:{user}}=await sb.auth.getUser(); if(!user){ $('#approvedForRequesterList').textContent='未ログインです'; return;}
+  const {data,error}=await sb.from('tasks').select('id,title,body,priority,due_at,status,created_at').eq('created_by',user.id).eq('status','approved').order('created_at',{ascending:false}).limit(50);
+  if(error){ $('#approvedForRequesterList').textContent='読み込みエラー'; return;}
+  $('#approvedForRequesterList').innerHTML=(data&&data.length)?data.map(t=>`
+    <div class="list-item">
+      <div class="h">${fmt(t.title)||'(無題)'}</div>
+      <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+      <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+fmtDate(t.due_at):''}</div>
+      <div class="actions">
+        <button class="btn green sm action" data-action="reopen" data-id="${t.id}">再確認依頼</button>
+        <button class="btn ghost sm action" data-action="done"   data-id="${t.id}">完了</button>
+      </div>
+    </div>`).join(''):'<div class="muted">確認済はありません</div>';
+};
+
+/* ====== 承認者：承認待ち／履歴 ====== */
+async function refreshApproveList(){
+  const box=$('#approveList'); box.textContent='読み込み中...';
+  const {data:{user}}=await sb.auth.getUser(); if(!user){ box.textContent='未ログインです'; return;}
+  const {data,error}=await sb.from('tasks').select('id,title,body,priority,due_at,status,created_by,created_at').neq('created_by',user.id).eq('status','open').order('created_at',{ascending:false}).limit(50);
+  if(error){ box.textContent='読み込みエラー'; return;}
+  box.innerHTML=(data&&data.length)?data.map(t=>`
+    <div class="list-item">
+      <div class="h">${fmt(t.title)||'(無題)'}</div>
+      <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
+      <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+fmtDate(t.due_at):''}</div>
+      <div class="actions">
+        <button class="btn green sm action" data-action="approve" data-id="${t.id}">確認</button>
+        <button class="btn ghost sm action" data-action="return"  data-id="${t.id}">差し戻し</button>
+        <button class="btn ghost sm action" data-action="done"    data-id="${t.id}">完了</button>
+      </div>
+    </div>`).join(''):'<div class="muted">承認待ちはありません</div>';
 }
-$('#login').onclick = async () => {
-  if(!window.sb){ alert('先に設定から URL/Key を保存してください'); return; }
-  const email = prompt('メールアドレス'); const password = prompt('パスワード');
-  if(!email || !password) return;
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){ alert('ログイン失敗：' + error.message); return; }
-  await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__();
-};
-$('#logout').onclick = async () => {
-  if(window.sb){ await sb.auth.signOut(); await refreshSessionLabel(); if(window.__apply_role__) window.__apply_role__(); }
-};
-
-/* profiles 取得/作成（role: requester / approver / 囚人P） */
-async function getOrCreateProfile() {
-  const { data:{ user } } = await sb.auth.getUser();
-  if(!user) return null;
-  let { data: prof, error } = await sb.from('profiles').select('id,name,role').eq('id', user.id).single();
-  if(error || !prof){
-    const payload = { id: user.id, name: user.email || 'user', role: 'requester' };
-    const { data: inserted, error: ierr } = await sb.from('profiles').insert(payload).select().single();
-    if(ierr) { console.warn('create profile error', ierr); return null; }
-    prof = inserted;
-  }
-  return prof;
-}
-
-/* 依頼者：未解決（open） */
-window.__refresh_open__ = async function(){
-  try{
-    if(!window.sb){ $('#autolist').textContent='設定未完了'; return; }
-    const { data:{ user } } = await sb.auth.getUser();
-    if(!user){ $('#autolist').textContent='未ログインです'; return; }
-
-    const { data, error } = await sb.from('tasks')
-      .select('id,title,body,priority,due_at,status,created_at,nudge_count,last_nudged_at')
-      .eq('created_by', user.id).eq('status','open')
-      .order('created_at',{ ascending:false }).limit(50);
-
-    if(error){ console.warn('[OPEN] error', error); $('#autolist').textContent='読み込みエラー'; return; }
-
-    $('#autolist').innerHTML =
-      (data&&data.length)
-        ? data.map(t => `
-            <div class="list-item">
-              <div class="h">${fmt(t.title)||'(無題)'}</div>
-              <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-              <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ fmtDate(t.due_at):''}
-                ${t.nudge_count? ' / 急げ:'+t.nudge_count+'回':''}
-              </div>
-              <div class="actions">
-                <button class="btn ghost sm action" data-action="nudge" data-id="${t.id}" data-count="${t.nudge_count||0}">急げ（通知）</button>
-                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">自分で完了</button>
-              </div>
-            </div>`).join('')
-        : '<div class="muted">未解決タスクはありません</div>';
-  }catch(e){ console.error('[OPEN] exception', e); }
-};
-
-/* 依頼者：差し戻し（returned） */
-window.__refresh_returned__ = async function(){
-  try{
-    if(!window.sb){ $('#returnedList').textContent='設定未完了'; return; }
-    const { data:{ user } } = await sb.auth.getUser();
-    if(!user){ $('#returnedList').textContent='未ログインです'; return; }
-
-    const { data, error } = await sb.from('tasks')
-      .select('id,title,body,priority,due_at,status,created_at')
-      .eq('created_by', user.id).eq('status','returned')
-      .order('created_at',{ ascending:false }).limit(50);
-
-    if(error){ console.warn('[RET] error', error); $('#returnedList').textContent='読み込みエラー'; return; }
-
-    $('#returnedList').innerHTML =
-      (data&&data.length)
-        ? data.map(t => `
-            <div class="list-item">
-              <div class="h">${fmt(t.title)||'(無題)'}</div>
-              <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-              <div class="small">優先度:${fmt(t.priority)||'mid'}${t.due_at?' / 期日:'+ fmtDate(t.due_at):''}</div>
-              <div class="actions">
-                <button class="btn green sm action" data-action="reopen" data-id="${t.id}">再確認依頼</button>
-                <button class="btn ghost sm action" data-action="done" data-id="${t.id}">完了</button>
-              </div>
-            </div>`).join('')
-        : '<div class="muted">差し戻しはありません</div>';
-  }catch(e){ console.error('[RET] exception', e); }
-};
-
-/* 承認者：承認待ち（open）＆履歴（approved） */
-async function refreshApproveList() {
-  const box = $('#approveList'); box.textContent='読み込み中...';
-  const { data:{ user } } = await sb.auth.getUser(); if(!user){ box.textContent='未ログインです'; return; }
-  const { data, error } = await sb.from('tasks')
-    .select('id,title,body,priority,due_at,status,created_by,created_at')
-    .neq('created_by', user.id).eq('status','open')
-    .order('created_at', { ascending:false }).limit(50);
-  if(error){ console.warn('[APPROVE] error', error); box.textContent='読み込みエラー'; return; }
-  box.innerHTML = (data&&data.length)
-    ? data.map(t => `
-        <div class="list-item">
-          <div class="h">${fmt(t.title)||'(無題)'}</div>
-          <div style="color:#666;margin-top:4px;">${fmt(t.body)||''}</div>
-          <div class="small">優先度:${fmt(t.priority)||'mid'} ${t.due_at?' / 期日:'+fmtDate(t.due_at):''}</div>
-          <div class="actions">
-            <button class="btn green sm action" data-action="approve" data-id="${t.id}">確認</button>
-            <button class="btn ghost sm action" data-action="return" data-id="${t.id}">差し戻し</button>
-            <button class="btn ghost sm action" data-action="done" data-id="${t.id}">完了</button>
-          </div>
-        </div>`).join('')
-    : '<div class="muted">承認待ちはありません</div>';
-}
-async function refreshApprovedHistory() {
-  const box = $('#approvedList'); box.textContent='読み込み中...';
-  const { data, error } = await sb.from('tasks')
-    .select('id,title,updated_at,created_at').eq('status','approved')
-    .order('updated_at', { ascending:false }).limit(30);
-  if(error){ console.warn('[HIST] error', error); box.textContent='読み込みエラー'; return; }
-  box.innerHTML = (data&&data.length)
-    ? data.map(t => `<div class="list-item"><div class="h">${fmt(t.title)||'(無題)'}</div>
-        <div class="small">承認日時: ${fmtDate(t.updated_at)||fmtDate(t.created_at)||''}</div></div>`).join('')
-    : '<div class="muted">履歴はありません</div>';
+async function refreshApprovedHistory(){
+  const box=$('#approvedList'); box.textContent='読み込み中...';
+  const {data,error}=await sb.from('tasks').select('id,title,updated_at,created_at').eq('status','approved').order('updated_at',{ascending:false}).limit(30);
+  if(error){ box.textContent='読み込みエラー'; return;}
+  box.innerHTML=(data&&data.length)?data.map(t=>`
+    <div class="list-item"><div class="h">${fmt(t.title)||'(無題)'}</div>
+    <div class="small">承認日時: ${fmtDate(t.updated_at)||fmtDate(t.created_at)||''}</div></div>`).join(''):'<div class="muted">履歴はありません</div>';
 }
 
 /* 役割切替 */
-window.__apply_role__ = async function(){
-  const prof = await getOrCreateProfile();
-  const role = prof?.role || 'requester';
-  const isApprover = (role === 'approver' || role === '囚人P');
-
-  const badge = $('#roleBadge'); badge.style.display='inline-block';
-  badge.textContent = isApprover ? '承認者（囚人P）' : '依頼者';
-
-  $('#requestCard').style.display      = isApprover ? 'none' : '';
-  $('#requestListCard').style.display  = isApprover ? 'none' : '';
-  $('#returnedCard').style.display     = isApprover ? 'none' : '';
-  $('#approverCard').style.display     = isApprover ? 'block' : 'none';
-  $('#approvedHistoryCard').style.display = isApprover ? 'block' : 'none';
-
+window.__apply_role__=async function(){
+  const prof=await getOrCreateProfile(); const role=prof?.role||'requester'; const isApprover=(role==='approver'||role==='囚人P');
+  const badge=$('#roleBadge'); badge.style.display='inline-block'; badge.textContent=isApprover?'承認者（囚人P）':'依頼者';
+  $('#requestCard').style.display=isApprover?'none':''; $('#requestListCard').style.display=isApprover?'none':''; $('#returnedCard').style.display=isApprover?'none':''; $('#approvedForRequesterCard').style.display=isApprover?'none':'';
+  $('#approverCard').style.display=isApprover?'block':'none'; $('#approvedHistoryCard').style.display=isApprover?'block':'none';
   if(isApprover){ await refreshApproveList(); await refreshApprovedHistory(); }
-  else { await window.__refresh_returned__(); await window.__refresh_open__(); }
+  else { await __refresh_returned__(); await __refresh_approved_for_requester__(); await __refresh_open__(); }
 };
 
 /* アクション（イベント委譲） */
 document.addEventListener('click', async (e)=>{
-  const btn = e.target.closest('.action'); if(!btn) return;
-  const id = +btn.dataset.id; const act = btn.dataset.action;
-
+  const btn=e.target.closest('.action'); if(!btn) return; const id=+btn.dataset.id; const act=btn.dataset.action;
   try{
-    if(act==='nudge'){
-      const count = +(btn.dataset.count||0)+1;
-      const { error } = await sb.from('tasks').update({
-        nudge_count: count, last_nudged_at: new Date().toISOString()
-      }).eq('id', id);
-      if(error) return alert('急げエラー: '+error.message);
-      await window.__refresh_open__();
-
-    }else if(act==='approve'){
-      const { error } = await sb.from('tasks').update({ status:'approved' }).eq('id', id);
-      if(error) return alert('承認エラー: '+error.message);
-      await refreshApproveList(); await refreshApprovedHistory();
-
-    }else if(act==='return'){
-      const { error } = await sb.from('tasks').update({ status:'returned' }).eq('id', id);
-      if(error) return alert('差し戻しエラー: '+error.message);
-      await refreshApproveList();             // 承認待ちから消える
-      await window.__refresh_returned__();    // 依頼者側の差し戻しに入る（次回表示時）
-
-    }else if(act==='reopen'){
-      const { error } = await sb.from('tasks').update({ status:'open' }).eq('id', id);
-      if(error) return alert('再確認依頼エラー: '+error.message);
-      await window.__refresh_returned__(); await window.__refresh_open__();
-
-    }else if(act==='done'){
-      const { error } = await sb.from('tasks').update({ status:'done' }).eq('id', id);
-      if(error) return alert('完了エラー: '+error.message);
-      // 両画面から消す
-      await window.__refresh_returned__().catch(()=>{});
-      await window.__refresh_open__().catch(()=>{});
-      await refreshApproveList().catch(()=>{});
-    }
+    if(act==='nudge'){ const {data:{user}}=await sb.auth.getUser(); const {data:t}=await sb.from('tasks').select('nudge_count').eq('id',id).single();
+      const count=(t?.nudge_count||0)+1; const {error}=await sb.from('tasks').update({nudge_count:count,last_nudged_at:new Date().toISOString()}).eq('id',id);
+      if(error) return alert('急げエラー: '+error.message); await __refresh_open__();
+    }else if(act==='approve'){ const {error}=await sb.from('tasks').update({status:'approved'}).eq('id',id);
+      if(error) return alert('承認エラー: '+error.message); await refreshApproveList(); await refreshApprovedHistory();
+    }else if(act==='return'){ const {error}=await sb.from('tasks').update({status:'returned'}).eq('id',id);
+      if(error) return alert('差し戻しエラー: '+error.message); await refreshApproveList(); await __refresh_returned__();
+    }else if(act==='reopen'){ const {error}=await sb.from('tasks').update({status:'open'}).eq('id',id);
+      if(error) return alert('再確認依頼エラー: '+error.message); await __refresh_returned__(); await __refresh_open__(); await __refresh_approved_for_requester__();
+    }else if(act==='done'){ const {error}=await sb.from('tasks').update({status:'done'}).eq('id',id);
+      if(error) return alert('完了エラー: '+error.message); await __refresh_returned__().catch(()=>{}); await __refresh_open__().catch(()=>{}); await __refresh_approved_for_requester__().catch(()=>{}); await refreshApproveList().catch(()=>{}); }
   }catch(err){ alert('処理中に例外: '+err); }
 });
 
 /* 送信（保存→リスト更新） */
 let sending=false;
-$('#send').onclick = async () => {
-  if(sending) return;
-  sending = true; $('#send').disabled=true; setTimeout(()=>{$('#send').disabled=false;sending=false;},1200);
-
-  const row = {
-    title: $('#title').value.trim(),
-    body: $('#body').value.trim() || null,
-    priority: 'mid',
-    due_at: $('#due').value ? new Date($('#due').value).toISOString() : null,
-    status: 'open', tags: [], project: null
-  };
+$('#send').onclick=async()=>{ if(sending) return; sending=true; $('#send').disabled=true; setTimeout(()=>{$('#send').disabled=false;sending=false;},1200);
+  const row={ title:$('#title').value.trim(), body:$('#body').value.trim()||null, priority:'mid', due_at:$('#due').value?new Date($('#due').value).toISOString():null, status:'open', tags:[], project:null };
   showToast('依頼を送信しました');
-
-  try{
-    if(!window.sb){ showToast('設定未完了'); return; }
-    const { data, error } = await sb.from('tasks').insert(row).select();
-    if(error){ console.warn('[insert error]', error); showToast('DB保存エラー: '+error.message); }
-    else { showToast('DBに保存OK (id:'+(data?.[0]?.id ?? '?')+')');
-      await window.__refresh_open__(); }
-  }catch(e){ console.warn('[insert exception]', e); showToast('例外: '+e); }
+  try{ if(!window.sb){ showToast('設定未完了'); return;}
+    const {data,error}=await sb.from('tasks').insert(row).select();
+    if(error){ showToast('DB保存エラー: '+error.message); }
+    else { showToast('DBに保存OK (id:'+(data?.[0]?.id ?? '?')+')'); await __refresh_open__(); }
+  }catch(e){ showToast('例外: '+e); }
 };
 
 /* 初期表示 */
-window.addEventListener('load', async () => {
-  await refreshSessionLabel();
-  if(window.__apply_role__) await window.__apply_role__();
-});
+window.addEventListener('load', async ()=>{ await refreshSessionLabel(); if(window.__apply_role__) await window.__apply_role__(); });
 </script>
 </body>
 </html>
+<!-- ここまで -->
